@@ -6,11 +6,14 @@ use std::collections::HashMap;
 pub const SPOTIFY_REFRESH: &str = "spotify-refresh-token";
 pub const DEEPL_KEY: &str = "deepl-api-key";
 
+/// Boxed: `oo7::Error` is large and travels through every token call.
+pub type Error = Box<oo7::Error>;
+
 fn attributes<'a>(kind: &'a str, account: &'a str) -> HashMap<&'a str, &'a str> {
     HashMap::from([("application", "rtify"), ("kind", kind), ("account", account)])
 }
 
-pub async fn load(kind: &str, account: &str) -> Result<Option<String>, oo7::Error> {
+pub async fn load(kind: &str, account: &str) -> Result<Option<String>, Error> {
     let keyring = oo7::Keyring::new().await?;
     let _ = keyring.unlock().await;
     let items = keyring.search_items(&attributes(kind, account)).await?;
@@ -19,7 +22,7 @@ pub async fn load(kind: &str, account: &str) -> Result<Option<String>, oo7::Erro
     Ok(Some(String::from_utf8_lossy(&secret).into_owned()).filter(|s| !s.is_empty()))
 }
 
-pub async fn store(kind: &str, account: &str, secret: &str) -> Result<(), oo7::Error> {
+pub async fn store(kind: &str, account: &str, secret: &str) -> Result<(), Error> {
     let keyring = oo7::Keyring::new().await?;
     let _ = keyring.unlock().await;
     let label = match kind {
@@ -27,10 +30,12 @@ pub async fn store(kind: &str, account: &str, secret: &str) -> Result<(), oo7::E
         DEEPL_KEY => "rtify: DeepL API key",
         _ => "rtify",
     };
-    keyring.create_item(label, &attributes(kind, account), secret, true).await
+    keyring.create_item(label, &attributes(kind, account), secret, true).await?;
+    Ok(())
 }
 
-pub async fn delete(kind: &str, account: &str) -> Result<(), oo7::Error> {
+pub async fn delete(kind: &str, account: &str) -> Result<(), Error> {
     let keyring = oo7::Keyring::new().await?;
-    keyring.delete(&attributes(kind, account)).await
+    keyring.delete(&attributes(kind, account)).await?;
+    Ok(())
 }
