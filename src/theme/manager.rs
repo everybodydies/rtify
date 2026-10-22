@@ -54,7 +54,7 @@ impl ThemeManager {
     }
 
     pub fn palette(&self) -> Palette {
-        Palette::derive(self.current.get())
+        Palette::derive_with(self.current.get(), self.appearance.borrow().oled)
     }
 
     pub fn connect_changed(&self, f: impl Fn(&Palette) + 'static) {
@@ -143,7 +143,7 @@ impl ThemeManager {
     }
 
     fn render(&self, base: BaseColors) {
-        let palette = Palette::derive(base);
+        let palette = Palette::derive_with(base, self.appearance.borrow().oled);
         let (family, size) = {
             let a = self.appearance.borrow();
             (a.font_family.clone(), a.font_size)

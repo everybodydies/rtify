@@ -1,6 +1,7 @@
 name: CI
 on:
   push:
+    branches: ["**"]
   pull_request:
 
 jobs:
@@ -22,3 +23,18 @@ jobs:
         with:
           name: screenshots
           path: screenshots/
+
+  arch-package:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, install and smoke-test the pacman package
+        run: |
+          sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+          OUT="$GITHUB_WORKSPACE/dist" bash packaging/arch/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rtify-arch-package
+          path: dist/

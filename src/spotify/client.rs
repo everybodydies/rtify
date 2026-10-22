@@ -238,6 +238,10 @@ impl SpotifyClient {
         self.get("/me/player", &[("additional_types", "episode".into())]).await
     }
 
+    pub async fn queue(&self) -> Result<Vec<Track>, ApiError> {
+        Ok(self.get_required::<Queue>("/me/player/queue", &[]).await?.queue)
+    }
+
     pub async fn devices(&self) -> Result<Vec<Device>, ApiError> {
         Ok(self.get_required::<Devices>("/me/player/devices", &[]).await?.devices)
     }

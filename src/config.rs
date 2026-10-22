@@ -71,6 +71,8 @@ pub struct Appearance {
     pub font_size: u32,
     pub animations_enabled: bool,
     pub reduced_motion: bool,
+    /// True-black surfaces and outlined controls for OLED panels.
+    pub oled: bool,
 }
 
 impl Default for Appearance {
@@ -85,6 +87,7 @@ impl Default for Appearance {
             font_size: 11,
             animations_enabled: true,
             reduced_motion: false,
+            oled: true,
         }
     }
 }
@@ -99,6 +102,9 @@ pub struct Window {
     pub height: i32,
     pub maximized: bool,
     pub compact: bool,
+    /// Right-hand "now playing" panel with cover and queue.
+    pub now_playing_panel: bool,
+    pub sidebar_width: i32,
 }
 
 impl Default for Window {
@@ -107,10 +113,12 @@ impl Default for Window {
             minimize_to_tray: true,
             start_hidden: false,
             remember_geometry: true,
-            width: 1100,
-            height: 720,
+            width: 1600,
+            height: 900,
             maximized: false,
             compact: false,
+            now_playing_panel: true,
+            sidebar_width: 300,
         }
     }
 }

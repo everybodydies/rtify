@@ -84,6 +84,18 @@ pub fn spacer() -> gtk::Box {
     b
 }
 
+/// A fixed-size square cover image (filled in later via `set_paintable`).
+pub fn cover_picture(size: i32) -> gtk::Picture {
+    let pic = gtk::Picture::new();
+    pic.set_size_request(size, size);
+    pic.set_content_fit(gtk::ContentFit::Cover);
+    pic.set_can_shrink(true);
+    pic.set_halign(gtk::Align::Start);
+    pic.set_valign(gtk::Align::Center);
+    pic.add_css_class("rt-cover");
+    pic
+}
+
 pub fn fmt_time(ms: u64) -> String {
     let s = ms / 1000;
     if s >= 3600 {

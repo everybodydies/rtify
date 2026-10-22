@@ -1,0 +1,71 @@
+name: Release
+
+# Push a tag to publish a release with a ready-to-install pacman package:
+#   git tag v0.1.0 && git push origin v0.1.0
+# The tag must match `version` in Cargo.toml and have a section in CHANGELOG.md.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag, e.g. v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    timeout-minutes: 45
+    steps:
+      - name: Tools
+        run: |
+          sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+          pacman -Syu --noconfirm --needed git github-cli >/dev/null
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Check version
+        id: v
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          grep -q "^version = \"$VERSION\"" Cargo.toml || { echo "::error::Cargo.toml version does not match $TAG"; exit 1; }
+          grep -q "^## \[$VERSION\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no section for $VERSION"; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build, install and smoke-test the package
+        run: OUT="$GITHUB_WORKSPACE/dist" bash packaging/arch/build.sh
+
+      - name: Release notes
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          awk -v v="$VERSION" '$0 ~ "^## \\[" v "\\]" { on = 1; next } on && /^## \[/ { exit } on { print }' CHANGELOG.md > notes.md
+          cat >> notes.md <<'MD'
+
+          ---
+          **Install (CachyOS / Arch):** download `rtify-*-x86_64.pkg.tar.zst`, then
+          `sudo pacman -U rtify-*-x86_64.pkg.tar.zst`. Run `rtify`, or find it in your launcher.
+          Spotify setup: see the README (own client ID, redirect `http://127.0.0.1:8898/callback`).
+          MD
+          sed "s/^pkgver=.*/pkgver=$VERSION/" packaging/arch/PKGBUILD > dist/PKGBUILD
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          gh release create "$TAG" dist/*.pkg.tar.zst dist/SHA256SUMS dist/PKGBUILD \
+            --repo "$GITHUB_REPOSITORY" --title "rtify $VERSION" --notes-file notes.md --verify-tag \
+            || gh release upload "$TAG" dist/*.pkg.tar.zst dist/SHA256SUMS dist/PKGBUILD --repo "$GITHUB_REPOSITORY" --clobber

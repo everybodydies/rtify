@@ -1,4 +1,5 @@
-//! The now-playing panel: cover, metadata, transport, progress and volume.
+//! Full-width player bar, laid out like the official client: track on the left, transport and
+//! progress centered, lyrics / panel / devices / volume on the right.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -9,14 +10,14 @@ use super::widgets::*;
 use crate::app::{App, PlayerOp};
 use crate::commands::Command;
 use crate::services::playback::{Playback, Repeat};
+use crate::spotify::model::Device;
 
 #[derive(Clone)]
 pub struct PlayerBar {
-    pub root: gtk::Overlay,
+    pub root: gtk::CenterBox,
     cover: gtk::Picture,
     title: gtk::Label,
     artist: gtk::Label,
-    detail: gtk::Label,
     play: gtk::Button,
     shuffle: gtk::ToggleButton,
     repeat: gtk::Button,
@@ -25,40 +26,54 @@ pub struct PlayerBar {
     elapsed: gtk::Label,
     duration: gtk::Label,
     volume: gtk::Scale,
-    /// Set while we update widgets from state so their signals don't echo commands back.
+    pub lyrics: gtk::ToggleButton,
+    pub panel_toggle: gtk::ToggleButton,
+    devices: gtk::ListBox,
+    devices_button: gtk::MenuButton,
+    /// Set while widgets are updated from state so their signals don't echo commands back.
     updating: Rc<Cell<bool>>,
     /// The user is dragging the progress bar; don't move it under their pointer.
     seeking: Rc<Cell<bool>>,
 }
 
+fn icon(text: &str, tooltip: &str) -> gtk::Button {
+    let b = button(text, tooltip);
+    b.add_css_class("rt-icon");
+    b
+}
+
+fn icon_toggle(text: &str, tooltip: &str) -> gtk::ToggleButton {
+    let b = toggle(text, tooltip);
+    b.add_css_class("rt-icon");
+    b
+}
+
 impl PlayerBar {
     pub fn new(app: &App) -> Self {
-        let cover = gtk::Picture::new();
-        cover.set_size_request(72, 72);
-        cover.set_content_fit(gtk::ContentFit::Cover);
-        cover.add_css_class("rt-cover");
-        cover.set_can_shrink(true);
-
-        let title = ellipsized("nothing playing", &["rt-title"]);
-        let artist = ellipsized("", &["rt-subtitle"]);
-        let detail = ellipsized("", &["rt-faint"]);
+        // Left: cover, title/artist, like.
+        let cover = cover_picture(56);
+        let title = ellipsized("nothing playing", &["rt-row-title"]);
+        let artist = ellipsized("", &["rt-dim", "rt-small"]);
         let meta = vbox(2);
-        meta.set_hexpand(true);
         meta.set_valign(gtk::Align::Center);
         meta.append(&title);
         meta.append(&artist);
-        meta.append(&detail);
+        let like = icon_toggle("♡", "Save to your library");
+        like.set_valign(gtk::Align::Center);
+        let left = hbox(12);
+        left.append(&cover);
+        left.append(&meta);
+        left.append(&like);
+        left.set_size_request(320, -1);
 
-        let shuffle = toggle("shuf", "Shuffle (Ctrl+S)");
-        let prev = button("◀◀", "Previous (Ctrl+←)");
-        let play = button("PLAY", "Play/Pause (Ctrl+Space)");
-        play.add_css_class("rt-accent");
-        play.set_size_request(80, -1);
-        let next = button("▶▶", "Next (Ctrl+→)");
-        let repeat = button("rep:off", "Repeat (Ctrl+R)");
-        let like = toggle("♡", "Save to your library");
-
-        let controls = hbox(6);
+        // Center: transport + progress.
+        let shuffle = icon_toggle("⇄", "Shuffle (Ctrl+S)");
+        let prev = icon("◀◀", "Previous (Ctrl+←)");
+        let play = button("▶", "Play/Pause (Space)");
+        play.add_css_class("rt-play");
+        let next = icon("▶▶", "Next (Ctrl+→)");
+        let repeat = icon("↻", "Repeat (Ctrl+R)");
+        let controls = hbox(10);
         controls.set_halign(gtk::Align::Center);
         for w in [
             shuffle.upcast_ref::<gtk::Widget>(),
@@ -66,45 +81,71 @@ impl PlayerBar {
             play.upcast_ref(),
             next.upcast_ref(),
             repeat.upcast_ref(),
-            like.upcast_ref(),
         ] {
             controls.append(w);
         }
-
-        let elapsed = label("0:00", &["rt-dim", "rt-mono-num"]);
-        let duration = label("0:00", &["rt-dim", "rt-mono-num"]);
+        let elapsed = label("0:00", &["rt-faint", "rt-mono-num", "rt-small"]);
+        elapsed.set_width_chars(5);
+        elapsed.set_xalign(1.0);
+        let duration = label("0:00", &["rt-faint", "rt-mono-num", "rt-small"]);
+        duration.set_width_chars(5);
         let progress = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 1000.0);
         progress.set_draw_value(false);
         progress.set_hexpand(true);
-        let volume = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 5.0);
-        volume.set_draw_value(false);
-        volume.set_size_request(100, -1);
-        volume.set_tooltip_text(Some("Volume (Ctrl+↑/↓)"));
         let bar = hbox(8);
         bar.append(&elapsed);
         bar.append(&progress);
         bar.append(&duration);
-        bar.append(&label("vol", &["rt-faint"]));
-        bar.append(&volume);
+        let center = vbox(2);
+        // Fixed-width transport like the official client, however wide the window gets.
+        center.set_size_request(680, -1);
+        center.set_hexpand(false);
+        center.set_valign(gtk::Align::Center);
+        center.append(&controls);
+        center.append(&bar);
 
-        let right = vbox(4);
-        right.set_hexpand(true);
-        right.append(&controls);
-        right.append(&bar);
+        // Right: lyrics, now-playing panel, devices, volume.
+        let lyrics = icon_toggle("lyrics", "Lyrics (Ctrl+Y)");
+        let panel_toggle = icon_toggle("▤", "Now playing panel");
+        let devices = gtk::ListBox::new();
+        devices.add_css_class("rt-list");
+        let dev_box = vbox(6);
+        dev_box.set_size_request(280, -1);
+        dev_box.append(&label("[ CONNECT TO A DEVICE ]", &["rt-section"]));
+        dev_box.append(&devices);
+        let popover = gtk::Popover::new();
+        popover.set_child(Some(&dev_box));
+        let devices_button = gtk::MenuButton::builder()
+            .label("⌁ device")
+            .popover(&popover)
+            .tooltip_text("Spotify Connect devices")
+            .build();
+        devices_button.add_css_class("rt-icon");
+        let volume = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 5.0);
+        volume.set_draw_value(false);
+        volume.set_size_request(110, -1);
+        volume.set_tooltip_text(Some("Volume (Ctrl+↑/↓)"));
+        let right = hbox(6);
+        right.set_halign(gtk::Align::End);
+        right.set_valign(gtk::Align::Center);
+        right.append(&lyrics);
+        right.append(&panel_toggle);
+        right.append(&devices_button);
+        right.append(&label("vol", &["rt-faint", "rt-small"]));
+        right.append(&volume);
+        right.set_size_request(320, -1);
 
-        let body = hbox(12);
-        body.append(&cover);
-        body.append(&meta);
-        body.append(&right);
-        meta.set_size_request(220, -1);
-        let root = panel("now playing", &body).root;
+        let root = gtk::CenterBox::new();
+        root.add_css_class("rt-playerbar");
+        root.set_start_widget(Some(&left));
+        root.set_center_widget(Some(&center));
+        root.set_end_widget(Some(&right));
 
         let this = Self {
             root,
             cover,
             title,
             artist,
-            detail,
             play: play.clone(),
             shuffle: shuffle.clone(),
             repeat: repeat.clone(),
@@ -113,6 +154,10 @@ impl PlayerBar {
             elapsed,
             duration,
             volume: volume.clone(),
+            lyrics: lyrics.clone(),
+            panel_toggle: panel_toggle.clone(),
+            devices: devices.clone(),
+            devices_button,
             updating: Rc::new(Cell::new(false)),
             seeking: Rc::new(Cell::new(false)),
         };
@@ -123,8 +168,7 @@ impl PlayerBar {
         prev.connect_clicked(move |_| a.command(Command::Previous));
         let a = app.clone();
         next.connect_clicked(move |_| a.command(Command::Next));
-        let a = app.clone();
-        let upd = this.updating.clone();
+        let (a, upd) = (app.clone(), this.updating.clone());
         shuffle.connect_toggled(move |_| {
             if !upd.get() {
                 a.command(Command::ToggleShuffle);
@@ -132,19 +176,35 @@ impl PlayerBar {
         });
         let a = app.clone();
         repeat.connect_clicked(move |_| a.command(Command::CycleRepeat));
-        let a = app.clone();
-        let upd = this.updating.clone();
+        let (a, upd) = (app.clone(), this.updating.clone());
         like.connect_toggled(move |b| {
             if !upd.get() {
                 a.player(PlayerOp::Like(b.is_active()));
             }
         });
+        let (a, upd) = (app.clone(), this.updating.clone());
+        lyrics.connect_toggled(move |_| {
+            if !upd.get() {
+                a.command(Command::ToggleLyrics);
+            }
+        });
+        let (a, upd) = (app.clone(), this.updating.clone());
+        panel_toggle.connect_toggled(move |b| {
+            if !upd.get() {
+                a.set_now_playing_panel(b.is_active());
+            }
+        });
+        let a = app.clone();
+        popover.connect_show(move |_| a.refresh_devices());
+        let (a, pop) = (app.clone(), popover.clone());
+        devices.connect_row_activated(move |_, row| {
+            a.transfer_to_row(row.index() as usize);
+            pop.popdown();
+        });
 
         // change-value fires only for user input. Seek once the user stops moving the slider;
         // until then only the elapsed label follows and polling doesn't move the knob.
-        let a = app.clone();
-        let seeking = this.seeking.clone();
-        let el = this.elapsed.clone();
+        let (a, seeking, el) = (app.clone(), this.seeking.clone(), this.elapsed.clone());
         let pending_seek: Rc<Cell<Option<glib::SourceId>>> = Rc::default();
         progress.connect_change_value(move |_, _, value| {
             seeking.set(true);
@@ -164,8 +224,7 @@ impl PlayerBar {
             glib::Propagation::Proceed
         });
 
-        let a = app.clone();
-        let upd = this.updating.clone();
+        let (a, upd) = (app.clone(), this.updating.clone());
         let pending: Rc<Cell<Option<glib::SourceId>>> = Rc::default();
         volume.connect_value_changed(move |s| {
             if upd.get() {
@@ -175,9 +234,7 @@ impl PlayerBar {
             if let Some(id) = pending.take() {
                 id.remove();
             }
-            let a = a.clone();
-            let v = s.value() as u32;
-            let pending2 = pending.clone();
+            let (a, v, pending2) = (a.clone(), s.value() as u32, pending.clone());
             pending.set(Some(glib::timeout_add_local_once(
                 std::time::Duration::from_millis(250),
                 move || {
@@ -195,28 +252,20 @@ impl PlayerBar {
             Some(t) => {
                 self.title.set_text(&t.name);
                 self.artist.set_text(&t.artist_names());
-                let device = pb.device.as_ref().map(|d| format!(" · {}", d.name)).unwrap_or_default();
-                let stale = if pb.stale { " · last session" } else { "" };
-                self.detail.set_text(&format!("{}{device}{stale}", t.album_name()));
             }
             None => {
                 self.title.set_text("nothing playing");
-                self.artist.set_text("");
-                self.detail
+                self.artist
                     .set_text(pb.device.as_ref().map(|d| d.name.as_str()).unwrap_or("no active device"));
             }
         }
-        self.play.set_label(if pb.playing { "PAUSE" } else { "PLAY" });
+        self.play.set_label(if pb.playing { "❚❚" } else { "▶" });
         self.shuffle.set_active(pb.shuffle);
-        self.repeat.set_label(match pb.repeat {
-            Repeat::Off => "rep:off",
-            Repeat::Context => "rep:all",
-            Repeat::Track => "rep:one",
-        });
+        self.repeat.set_label(if pb.repeat == Repeat::Track { "↻1" } else { "↻" });
         if pb.repeat == Repeat::Off {
-            self.repeat.remove_css_class("rt-accent");
+            self.repeat.remove_css_class("rt-on");
         } else {
-            self.repeat.add_css_class("rt-accent");
+            self.repeat.add_css_class("rt-on");
         }
         if let Some(s) = saved {
             self.like.set_active(s);
@@ -228,8 +277,11 @@ impl PlayerBar {
         }
         self.volume
             .set_sensitive(pb.device.as_ref().is_some_and(|d| d.supports_volume != Some(false)));
-        let dur = pb.duration_ms().max(1);
-        self.progress.set_range(0.0, dur as f64);
+        self.devices_button.set_label(&match &pb.device {
+            Some(d) => format!("⌁ {}", d.name),
+            None => "⌁ device".to_owned(),
+        });
+        self.progress.set_range(0.0, pb.duration_ms().max(1) as f64);
         self.duration.set_text(&fmt_time(pb.duration_ms()));
         self.updating.set(false);
         self.tick(pb);
@@ -251,9 +303,40 @@ impl PlayerBar {
         self.cover.set_paintable(texture);
     }
 
-    pub fn set_compact(&self, compact: bool) {
-        self.cover
-            .set_size_request(if compact { 48 } else { 72 }, if compact { 48 } else { 72 });
-        self.detail.set_visible(!compact);
+    /// Reflect page/panel state in the toggles without triggering them.
+    pub fn set_toggles(&self, lyrics: bool, panel: bool) {
+        self.updating.set(true);
+        self.lyrics.set_active(lyrics);
+        self.panel_toggle.set_active(panel);
+        self.updating.set(false);
+    }
+
+    pub fn set_devices(&self, devices: &[Device]) {
+        clear_list(&self.devices);
+        if devices.is_empty() {
+            self.devices
+                .append(&label("no devices — open Spotify on a phone, speaker or computer", &["rt-faint"]));
+            return;
+        }
+        for d in devices {
+            let row = hbox(8);
+            row.append(&label(
+                if d.is_active { "◉" } else { "○" },
+                &[if d.is_active { "rt-accent" } else { "rt-faint" }],
+            ));
+            let meta = vbox(0);
+            meta.set_hexpand(true);
+            meta.append(&ellipsized(&d.name, &[if d.is_active { "rt-accent" } else { "rt-row-title" }]));
+            let mut sub = d.kind.to_lowercase();
+            if let Some(v) = d.volume_percent {
+                sub.push_str(&format!(" · vol {v}%"));
+            }
+            if d.is_restricted {
+                sub.push_str(" · restricted");
+            }
+            meta.append(&label(&sub, &["rt-faint", "rt-small"]));
+            row.append(&meta);
+            self.devices.append(&row);
+        }
     }
 }

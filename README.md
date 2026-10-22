@@ -1,8 +1,9 @@
 # rtify
 
 A Spotify Connect companion for Linux desktops, written in Rust with GTK 4. It's the native sibling
-of [qtify](https://github.com/everybodydies/qtify): a **System24**-style window (monospace type,
-thin rectangular panels with the title set into the border, one accent), a **tray icon**,
+of [qtify](https://github.com/everybodydies/qtify): a widescreen layout modeled on the official
+client, drawn in the **System24** style (monospace type, thin rectangular panels with the title set
+into the border, one accent) with an **OLED black** mode that is on by default, a **tray icon**,
 **global shortcuts**, settings and session state that survive restarts, and a **lyrics renderer**
 with word/syllable animation, romanization and optional translation.
 
@@ -30,7 +31,47 @@ the desktop client) through the Web API. It does not play audio itself.
 | Live Spotify-synchronized lyrics | behind a capability gate, **off by default** (see below) |
 | MPRIS server, playlist editing, queue view | not yet |
 
+## Layout
+
+```
+┌ ◀ ▶ [ RTIFY ]            [ what do you want to play? ]              ● you  ⚙ ▭ — ┐
+│ [ YOUR LIBRARY ]  │ [ PLAYLIST ]                              │ [ NOW PLAYING ]   │
+│ playlists albums  │ ┌────┐ PLAYLIST                           │ ┌───────────────┐ │
+│ filter            │ │    │ Coding Nights                      │ │     cover     │ │
+│ ♥ Liked Songs     │ └────┘ Demo · 24 songs                    │ └───────────────┘ │
+│ ▣ Coding Nights   │ [▶ PLAY] [⇄ shuffle]                      │ title / artist    │
+│ ▣ Autobahn        │ #  TITLE            ALBUM     ADDED  TIME │ [ NEXT UP ]       │
+│ …                 │ 1  ▣ Neon Rain      Midnight… 09-01  2:30 │ ▣ …               │
+├───────────────────┴───────────────────────────────────────────┴───────────────────┤
+│ ▣ title ♡             ⇄  ◀◀  [❚❚]  ▶▶  ↻   1:29 ━━━━━━━━── 3:01   lyrics ▤ ⌁ vol ━ │
+└────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+The middle switches between collections, search results and lyrics (`lyrics` button, `Ctrl+Y`),
+with back/forward (`Alt+←/→`, mouse side buttons). `▤` toggles the now-playing panel, `⌁` picks a
+Spotify Connect device, `▭` turns the window into a mini player. The sidebar width and panel state
+persist.
+
+**OLED black** (Settings → appearance, on by default) turns every surface true black, keeps
+borders at hairline brightness, draws accent controls as outlines instead of filled blocks, and
+drops the lyrics glow. Text sits slightly below full white.
+
 ## Install
+
+The easiest way is the ready-made package from
+[Releases](https://github.com/everybodydies/rtify/releases):
+
+```sh
+sudo pacman -U rtify-0.1.0-1-x86_64.pkg.tar.zst
+```
+
+To build the same package yourself (in a clean Arch container, with a smoke test):
+
+```sh
+docker run --rm -v "$PWD:/src" archlinux:latest bash /src/packaging/arch/build.sh   # → dist/
+```
+
+Or from source:
 
 ```sh
 sudo pacman -S --needed rust gtk4
@@ -40,8 +81,6 @@ install -Dm755 target/release/rtify ~/.local/bin/rtify
 install -Dm644 data/io.github.everybodydies.rtify.desktop -t ~/.local/share/applications
 install -Dm644 data/icons/io.github.everybodydies.rtify.svg -t ~/.local/share/icons/hicolor/scalable/apps
 ```
-
-Or build a package: `cd packaging/arch && makepkg -si`.
 
 For kanji romanization, build with `cargo build --release --features japanese-kanji`. That
 embeds the IPADIC dictionary, so the binary gets much larger.

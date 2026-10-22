@@ -27,7 +27,8 @@ use crate::services::polling::{PollInputs, next_poll};
 use crate::spotify::model::{Device, Track, pick_image};
 use crate::spotify::{ApiError, PlayRequest, SpotifyClient, auth, tokens};
 use crate::theme::manager::ThemeManager;
-use crate::ui::library::{Collection, LIKED_URI, LibraryPane, SEARCH_URI};
+use crate::ui::collection::TrackRow;
+use crate::ui::library::{Collection, LIKED_URI, SEARCH_URI};
 use crate::ui::lyrics::view::{Clock, ViewOptions};
 use crate::ui::window::MainWindow;
 
@@ -48,8 +49,15 @@ enum LyricsSource {
     Track(String),
 }
 
-/// Display name, tracks and the next page offset of a loaded collection.
-type TrackPage = (Option<String>, Vec<Track>, Option<u32>);
+/// Rows and the next page offset of a loaded collection.
+type TrackPage = (Vec<TrackRow>, Option<u32>);
+
+/// Back/forward history of the main view.
+#[derive(Debug, Clone)]
+enum Nav {
+    Collection(Collection),
+    Search(String),
+}
 
 pub struct Inner {
     pub gtk_app: gtk::Application,
@@ -82,6 +90,8 @@ pub struct Inner {
     lyric_cache: RefCell<LyricCache>,
     deepl_key: RefCell<Option<String>>,
     pub shortcut_status: RefCell<String>,
+    history: RefCell<Vec<Nav>>,
+    history_pos: Cell<usize>,
 }
 
 #[derive(Clone)]
@@ -160,6 +170,8 @@ impl App {
             lyric_cache: RefCell::default(),
             deepl_key: RefCell::default(),
             shortcut_status: RefCell::new("not registered".into()),
+            history: RefCell::default(),
+            history_pos: Cell::new(0),
         }));
         // Background operation: the process outlives its window until Quit.
         *app.hold.borrow_mut() = Some(gtk_app.hold());
@@ -183,8 +195,8 @@ impl App {
         // Last-known state until Spotify answers.
         if let Some(s) = app.session.borrow().current().cloned() {
             let pb = Playback::from_session(&s);
-            app.win().player.update(&pb, None);
-            if let Some(url) = pb.track.as_ref().and_then(|t| pick_image(t.images(), 200)).map(|i| i.url.clone()) {
+            app.win().update_playback(&pb, None);
+            if let Some(url) = pb.track.as_ref().and_then(|t| pick_image(t.images(), 640)).map(|i| i.url.clone()) {
                 app.load_cover(&url);
             }
             *app.playback.borrow_mut() = pb;
@@ -380,13 +392,6 @@ impl App {
         }
     }
 
-    pub fn page_changed(&self, page: &str) {
-        if page == "devices" && self.logged_in.get() {
-            self.refresh_devices();
-        }
-        self.schedule_session_save();
-    }
-
     pub fn visibility_changed(&self) {
         let visible = self.win().window.is_visible();
         if let Some(h) = self.tray.borrow().clone() {
@@ -470,6 +475,7 @@ impl App {
                     w.show_page("lyrics");
                     self.present();
                 }
+                self.schedule_session_save();
             }
             Command::PlayPause => self.play_pause(),
             Command::Next => self.simple(|c| async move { c.next().await }),
@@ -500,10 +506,7 @@ impl App {
             }
             Command::FocusSearch => {
                 self.present();
-                if self.logged_in.get() {
-                    w.show_page("library");
-                }
-                w.library.focus_search();
+                w.focus_search();
             }
             Command::ToggleCompact => {
                 let compact = !self.config.borrow().config.window.compact;
@@ -787,7 +790,7 @@ impl App {
             self.track_changed(&pb, was_stale);
         }
         self.refresh_player_ui();
-        self.win().library.mark_playing(new_uri.as_deref());
+        self.win().collection.mark_playing(new_uri.as_deref());
         self.update_tray();
         self.update_lyric_clock();
         self.schedule_session_save();
@@ -799,7 +802,7 @@ impl App {
 
     fn refresh_player_ui(&self) {
         let pb = self.playback.borrow().clone();
-        self.win().player.update(&pb, self.saved_current.get());
+        self.win().update_playback(&pb, self.saved_current.get());
     }
 
     fn start_progress_timer(&self) {
@@ -815,12 +818,13 @@ impl App {
 
     fn track_changed(&self, pb: &Playback, first_live: bool) {
         let Some(track) = pb.track.clone() else {
-            self.win().player.set_cover(None);
+            self.win().set_cover(None);
             return;
         };
-        if let Some(url) = pick_image(track.images(), 200).map(|i| i.url.clone()) {
+        if let Some(url) = pick_image(track.images(), 640).map(|i| i.url.clone()) {
             self.load_cover(&url);
         }
+        self.refresh_queue();
         // Liked state for the heart button.
         if !track.uri.is_empty() && !track.is_local {
             let client = self.client();
@@ -855,10 +859,10 @@ impl App {
                 .borrow()
                 .track
                 .as_ref()
-                .and_then(|t| pick_image(t.images(), 200))
+                .and_then(|t| pick_image(t.images(), 640))
                 .map(|i| i.url.clone());
             if current.as_deref() == Some(wanted.as_str()) {
-                app.win().player.set_cover(texture.as_ref());
+                app.win().set_cover(texture.as_ref());
             }
         });
         if self.config.borrow().config.appearance.palette_source == crate::config::PaletteSource::AlbumArt {
@@ -1001,7 +1005,7 @@ impl App {
         let app = self.clone();
         spawn_then(async move { client.devices().await }, move |r| match r {
             Ok(devs) => {
-                app.win().set_devices(&devs);
+                app.win().player.set_devices(&devs);
                 *app.devices.borrow_mut() = devs;
             }
             Err(e) => app.notice(&format!("devices: {e}"), true),
@@ -1082,28 +1086,19 @@ impl App {
             },
             move |r| match r {
                 Ok((playlists, albums)) => {
-                    let lib = &app.win().library;
-                    lib.set_playlists(playlists.clone());
-                    lib.set_albums(albums.clone());
-                    // Restore the selected collection from the last session.
+                    let side = &app.win().sidebar;
+                    side.set_playlists(playlists);
+                    side.set_albums(albums);
+                    // Restore the open collection from the last session; first run shows the
+                    // first playlist rather than an empty view.
                     let saved = app
                         .account
                         .borrow()
                         .as_ref()
                         .and_then(|a| app.session.borrow().data.accounts.get(a).and_then(|s| s.library_selection.clone()));
-                    let restored = saved.filter(|u| u != SEARCH_URI).and_then(|uri| {
-                        let name = if uri == LIKED_URI {
-                            Some("liked songs".to_owned())
-                        } else {
-                            playlists.iter().chain(albums.iter()).find(|c| c.uri == uri).map(|c| c.name.clone())
-                        };
-                        name.map(|n| (uri, n))
-                    });
-                    // First run: show something rather than an empty pane.
-                    let selection = restored.or_else(|| playlists.first().map(|c| (c.uri.clone(), c.name.clone())));
-                    if let Some((uri, name)) = selection {
-                        lib.select(&app, &uri, &name);
-                        lib.rebuild_collections();
+                    let restored = saved.filter(|u| u != SEARCH_URI).and_then(|uri| side.find(&uri));
+                    if let Some(c) = restored.or_else(|| side.first_playlist()) {
+                        app.open_collection(c, true);
                     }
                 }
                 Err(e) => app.notice(&format!("library: {e}"), true),
@@ -1111,10 +1106,54 @@ impl App {
         );
     }
 
-    pub fn load_tracks(&self, pane: &LibraryPane, uri: &str, offset: u32) {
-        pane.state.borrow_mut().loading = true;
+    /// Show a collection in the main view and load its tracks. `record` adds it to back/forward.
+    pub fn open_collection(&self, c: Collection, record: bool) {
+        if record {
+            self.push_history(Nav::Collection(c.clone()));
+        }
+        let w = self.win();
+        w.collection.show(&c);
+        w.sidebar.mark_selected(Some(&c.uri));
+        if w.page() != "library" {
+            w.show_page("library");
+        }
+        self.remember_selection(&c.uri);
+        self.load_tracks(&c.uri, 0);
+    }
+
+    fn push_history(&self, nav: Nav) {
+        let mut h = self.history.borrow_mut();
+        let pos = self.history_pos.get();
+        h.truncate(pos + 1);
+        h.push(nav);
+        if h.len() > 50 {
+            h.remove(0);
+        }
+        self.history_pos.set(h.len() - 1);
+        let len = h.len();
+        drop(h);
+        self.win().set_history_buttons(len > 1, false);
+    }
+
+    pub fn navigate_history(&self, delta: i32) {
+        let len = self.history.borrow().len();
+        let pos = self.history_pos.get() as i64 + delta as i64;
+        if pos < 0 || pos >= len as i64 {
+            return;
+        }
+        self.history_pos.set(pos as usize);
+        let nav = self.history.borrow()[pos as usize].clone();
+        self.win().set_history_buttons(pos > 0, (pos as usize) + 1 < len);
+        match nav {
+            Nav::Collection(c) => self.open_collection(c, false),
+            Nav::Search(q) => self.search(&q, false),
+        }
+    }
+
+    pub fn load_tracks(&self, uri: &str, offset: u32) {
+        let view = self.win().collection.clone();
+        view.state.borrow_mut().loading = true;
         let client = self.client();
-        let pane = pane.clone();
         let uri = uri.to_owned();
         let kind = crate::spotify::client::uri_kind(&uri).to_owned();
         let id = crate::spotify::client::uri_id(&uri).to_owned();
@@ -1124,70 +1163,80 @@ impl App {
                 if liked {
                     let p = client.saved_tracks(offset).await?;
                     let next = p.next.as_ref().map(|_| offset + p.items.len() as u32);
-                    return Ok((None, p.items.into_iter().map(|s| s.track).collect::<Vec<Track>>(), next));
+                    let rows = p
+                        .items
+                        .into_iter()
+                        .map(|s| TrackRow {
+                            track: s.track,
+                            added_at: s.added_at,
+                        })
+                        .collect();
+                    return Ok((rows, next));
                 }
                 if kind == "album" {
                     let a = client.album(&id).await?.ok_or(ApiError::Status(404, "album not found".into()))?;
-                    let images = a.album.images.clone();
                     let album_ref = crate::spotify::model::AlbumRef {
                         uri: a.album.uri.clone(),
                         name: a.album.name.clone(),
-                        images,
+                        images: a.album.images.clone(),
                         ..Default::default()
                     };
-                    let tracks = a.tracks.items.into_iter().map(|mut t| {
-                        t.album.get_or_insert_with(|| album_ref.clone());
-                        t
-                    });
-                    return Ok((Some(a.album.name.clone()), tracks.collect(), None));
+                    let rows = a
+                        .tracks
+                        .items
+                        .into_iter()
+                        .map(|mut t| {
+                            t.album.get_or_insert_with(|| album_ref.clone());
+                            TrackRow::new(t)
+                        })
+                        .collect();
+                    return Ok((rows, None));
                 }
                 let p = client.playlist_items(&id, offset).await?;
                 let next = p.next.as_ref().map(|_| offset + p.items.len() as u32);
-                Ok((None, p.items.into_iter().filter_map(|i| i.item).collect(), next))
+                let rows = p
+                    .items
+                    .into_iter()
+                    .filter_map(|i| {
+                        i.item.map(|track| TrackRow {
+                            track,
+                            added_at: i.added_at,
+                        })
+                    })
+                    .collect();
+                Ok((rows, next))
             },
-            {
-                let uri = uri.clone();
-                move |r: Result<TrackPage, ApiError>| match r {
-                    Ok((name, tracks, next)) => {
-                        let name = name.unwrap_or_else(|| {
-                            let st = pane.state.borrow();
-                            if uri == LIKED_URI {
-                                "liked songs".into()
-                            } else {
-                                st.playlists
-                                    .iter()
-                                    .chain(st.albums.iter())
-                                    .chain(st.search_collections.iter())
-                                    .find(|c| c.uri == uri)
-                                    .map(|c| c.name.clone())
-                                    .unwrap_or_default()
-                            }
-                        });
-                        pane.set_tracks(&uri, &name, tracks, next);
-                    }
-                    Err(ApiError::Status(403, _)) => {
-                        pane.set_error("Spotify doesn't let apps read this playlist (only your own and collaborative ones)")
-                    }
-                    Err(e) => pane.set_error(&e.to_string()),
+            move |r: Result<TrackPage, ApiError>| match r {
+                Ok((rows, next)) => view.append(&uri, rows, next),
+                Err(ApiError::Status(403, _)) => {
+                    view.set_error("Spotify doesn't let apps read this playlist (only your own and collaborative ones)")
                 }
+                Err(e) => view.set_error(&e.to_string()),
             },
         );
     }
 
-    pub fn load_more_tracks(&self, pane: &LibraryPane) {
-        let (sel, next, loading) = {
-            let st = pane.state.borrow();
-            (st.selection.clone(), st.next_offset, st.loading)
+    pub fn load_more_tracks(&self) {
+        let view = &self.win().collection;
+        let (uri, next, loading) = {
+            let st = view.state.borrow();
+            (view.uri(), st.next_offset, st.loading)
         };
-        if let (Some(sel), Some(next), false) = (sel, next, loading) {
-            self.load_tracks(pane, &sel, next);
+        if let (Some(uri), Some(next), false) = (uri, next, loading)
+            && uri != SEARCH_URI
+        {
+            self.load_tracks(&uri, next);
         }
     }
 
-    pub fn search(&self, q: &str) {
+    pub fn search(&self, q: &str, record: bool) {
+        if record {
+            self.push_history(Nav::Search(q.to_owned()));
+        }
         let client = self.client();
         let app = self.clone();
         let q = q.to_owned();
+        let query = q.clone();
         spawn_then(async move { client.search(&q).await }, move |r| match r {
             Ok(res) => {
                 let mut cols: Vec<Collection> = res
@@ -1200,12 +1249,39 @@ impl App {
                         .unwrap_or_default(),
                 );
                 let tracks = res.tracks.map(|t| t.items).unwrap_or_default();
-                let lib = &app.win().library;
-                lib.set_search(cols, tracks);
-                lib.select(&app, SEARCH_URI, "search");
+                let w = app.win();
+                w.collection.show_search(&query, cols, tracks);
+                w.sidebar.mark_selected(None);
+                w.show_page("library");
             }
             Err(e) => app.notice(&format!("search: {e}"), true),
         });
+    }
+
+    /// Images for thumbnails and covers, through the shared cache.
+    pub fn load_image(&self, url: &str, cb: impl FnOnce(Option<gtk::gdk::Texture>) + 'static) {
+        self.artwork.load(&self.http, url, cb);
+    }
+
+    fn refresh_queue(&self) {
+        let client = self.client();
+        let app = self.clone();
+        spawn_then(async move { client.queue().await }, move |r| match r {
+            Ok(q) => app.win().now_playing.set_queue(&q),
+            Err(e) => log::debug!("queue: {e}"),
+        });
+    }
+
+    pub fn set_now_playing_panel(&self, visible: bool) {
+        self.update_config(|c| c.window.now_playing_panel = visible);
+        self.win().set_now_playing_panel(visible);
+    }
+
+    /// Turn shuffle on/off explicitly (the shuffle-play button).
+    pub fn set_shuffle(&self, on: bool) {
+        self.playback.borrow_mut().shuffle = on;
+        self.refresh_player_ui();
+        self.simple(move |c| async move { c.shuffle(on, None).await });
     }
 
     pub fn play_from(&self, selection: &str, tracks: &[Track], index: usize) {

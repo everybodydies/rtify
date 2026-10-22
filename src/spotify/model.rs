@@ -192,6 +192,13 @@ pub struct Devices {
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default)]
+pub struct Queue {
+    pub currently_playing: Option<Track>,
+    pub queue: Vec<Track>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
 pub struct Me {
     pub id: String,
     pub display_name: Option<String>,

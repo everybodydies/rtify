@@ -429,7 +429,8 @@ impl LyricsView {
         let effects = st.opts.effects();
         let t = st.started.elapsed().as_secs_f64();
 
-        if effects && st.doc.is_some() {
+        // No glow on OLED: keep the background pixels off.
+        if effects && !p.oled && st.doc.is_some() {
             draw_background(snapshot, w, h, p.accent, t);
         }
 

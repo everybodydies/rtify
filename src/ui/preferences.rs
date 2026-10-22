@@ -143,8 +143,13 @@ pub fn open(app: &App) {
                 }),
             ),
             row(
+                "OLED black",
+                "true-black surfaces, hairline borders, outlined controls; overrides the palette's background",
+                &switch(app, c.appearance.oled, |_, c, on| c.appearance.oled = on),
+            ),
+            row(
                 "light surfaces",
-                "",
+                "ignored while OLED black is on",
                 &switch(app, c.appearance.light, |_, c, on| c.appearance.light = on),
             ),
             row(
