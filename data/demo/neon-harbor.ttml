@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Original demo text written for rtify (GPL-3.0-or-later). Not a real song. -->
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" itunes:timing="Word" xml:lang="en">
+  <head>
+    <metadata>
+      <iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+        <translations>
+          <translation type="replacement" xml:lang="de">
+          <text for="L1">Lichter auf dem Wasser, leise summend</text>
+          <text for="L2">Jeder Kran tanzt langsam</text>
+          <text for="L3">Wir zählen die Schiffe, die nie anlegen</text>
+          <text for="L4">Halten die Nacht in offener Hand</text>
+          <text for="L5">Neonhafen, trag mich nach Hause</text>
+          <text for="L6">Rauschen im Radio</text>
+          <text for="L7">Neonhafen, ich bin nicht allein</text>
+          <text for="L8">Die Wellen halten den Takt</text>
+          </translation>
+        </translations>
+        <songwriters><songwriter>rtify contributors</songwriter></songwriters>
+      </iTunesMetadata>
+    </metadata>
+  </head>
+  <body>
+    <div>
+      <p begin="00:02.000" end="00:05.600" itunes:key="L1" ttm:agent="v1"><span begin="00:02.000" end="00:02.410">Lights</span> <span begin="00:02.450" end="00:02.860">on</span> <span begin="00:02.900" end="00:03.310">the</span> <span begin="00:03.350" end="00:03.760">wa</span><span begin="00:03.800" end="00:04.210">ter,</span> <span begin="00:04.250" end="00:04.660">hum</span><span begin="00:04.700" end="00:05.110">ming</span> <span begin="00:05.150" end="00:05.560">low</span></p>
+      <p begin="00:06.200" end="00:09.798" itunes:key="L2" ttm:agent="v1"><span begin="00:06.200" end="00:06.674">Ev</span><span begin="00:06.714" end="00:07.188">ery</span> <span begin="00:07.228" end="00:07.702">crane</span> <span begin="00:07.742" end="00:08.216">is</span> <span begin="00:08.256" end="00:08.730">dan</span><span begin="00:08.770" end="00:09.244">cing</span> <span begin="00:09.284" end="00:09.758">slow</span></p>
+      <p begin="00:10.398" end="00:13.998" itunes:key="L3" ttm:agent="v1"><span begin="00:10.398" end="00:10.808">We</span> <span begin="00:10.848" end="00:11.258">count</span> <span begin="00:11.298" end="00:11.708">the</span> <span begin="00:11.748" end="00:12.158">ships</span> <span begin="00:12.198" end="00:12.608">that</span> <span begin="00:12.648" end="00:13.058">nev</span><span begin="00:13.098" end="00:13.508">er</span> <span begin="00:13.548" end="00:13.958">land</span></p>
+      <p begin="00:14.598" end="00:18.198" itunes:key="L4" ttm:agent="v1"><span begin="00:14.598" end="00:14.958">Hold</span><span begin="00:14.998" end="00:15.358">ing</span> <span begin="00:15.398" end="00:15.758">the</span> <span begin="00:15.798" end="00:16.158">night</span> <span begin="00:16.198" end="00:16.558">in</span> <span begin="00:16.598" end="00:16.958">an</span> <span begin="00:16.998" end="00:17.358">o</span><span begin="00:17.398" end="00:17.758">pen</span> <span begin="00:17.798" end="00:18.158">hand</span></p>
+      <p begin="00:20.798" end="00:24.398" itunes:key="L5" ttm:agent="v1"><span begin="00:20.798" end="00:21.208">Ne</span><span begin="00:21.248" end="00:21.658">on</span> <span begin="00:21.698" end="00:22.108">har</span><span begin="00:22.148" end="00:22.558">bor,</span> <span begin="00:22.598" end="00:23.008">car</span><span begin="00:23.048" end="00:23.458">ry</span> <span begin="00:23.498" end="00:23.908">me</span> <span begin="00:23.948" end="00:24.358">home</span></p>
+      <p begin="00:24.998" end="00:28.596" itunes:key="L6" ttm:agent="v1"><span begin="00:24.998" end="00:25.472">Stat</span><span begin="00:25.512" end="00:25.986">ic</span> <span begin="00:26.026" end="00:26.500">on</span> <span begin="00:26.540" end="00:27.014">the</span> <span begin="00:27.054" end="00:27.528">ra</span><span begin="00:27.568" end="00:28.042">di</span><span begin="00:28.082" end="00:28.556">o</span></p>
+      <p begin="00:29.196" end="00:32.796" itunes:key="L7" ttm:agent="v1"><span begin="00:29.196" end="00:29.606">Ne</span><span begin="00:29.646" end="00:30.056">on</span> <span begin="00:30.096" end="00:30.506">har</span><span begin="00:30.546" end="00:30.956">bor,</span> <span begin="00:30.996" end="00:31.406">I'm</span> <span begin="00:31.446" end="00:31.856">not</span> <span begin="00:31.896" end="00:32.306">a</span><span begin="00:32.346" end="00:32.756">lone</span></p>
+      <p begin="00:33.396" end="00:36.996" itunes:key="L8" ttm:agent="v1"><span begin="00:33.396" end="00:34.076">Waves</span> <span begin="00:34.116" end="00:34.796">keep</span> <span begin="00:34.836" end="00:35.516">the</span> <span begin="00:35.556" end="00:36.236">tem</span><span begin="00:36.276" end="00:36.956">po</span></p>
+    </div>
+  </body>
+</tt>

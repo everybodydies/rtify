@@ -1,0 +1,5 @@
+# Append to ~/.config/noctalia/templates.toml
+[theme.templates.user.rtify]
+input_path = "$XDG_CONFIG_HOME/noctalia/templates/rtify.css"
+output_path = "$XDG_CONFIG_HOME/rtify/noctalia.css"
+post_hook = "rtify --reload-theme"

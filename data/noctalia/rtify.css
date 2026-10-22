@@ -1,0 +1,10 @@
+/* Noctalia user template for rtify.
+ * Copy to ~/.config/noctalia/templates/rtify.css and register it in templates.toml.
+ * Noctalia renders it to ~/.config/rtify/noctalia.css whenever the palette changes. */
+:root {
+  --s24-bg: {{ colors.surface.default.hex }};
+  --s24-fg: {{ colors.on_surface.default.hex }};
+  --s24-accent: {{ colors.primary.default.hex }};
+  --s24-border: {{ colors.outline.default.hex }};
+  --s24-error: {{ colors.error.default.hex }};
+}

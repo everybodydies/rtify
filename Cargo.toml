@@ -1,0 +1,45 @@
+[package]
+name = "rtify"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+description = "Spotify Connect companion for Linux desktops: System24 look, tray, global shortcuts, animated lyrics"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/everybodydies/rtify"
+readme = "README.md"
+
+[features]
+default = []
+# Kanji readings via Lindera's embedded IPADIC dictionary (large; kana is always supported).
+japanese-kanji = ["dep:lindera"]
+
+[dependencies]
+gtk = { package = "gtk4", version = "0.11", features = ["v4_14"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }
+async-channel = "2"
+futures-util = "0.3"
+reqwest = { version = "0.13", features = ["json", "form", "query"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+clap = { version = "4", features = ["derive"] }
+ksni = "0.3"
+ashpd = { version = "0.13", features = ["global_shortcuts"] }
+oo7 = "0.6"
+sha2 = "0.11"
+base64 = "0.23"
+getrandom = "0.4"
+url = "2"
+log = "0.4"
+env_logger = "0.11"
+thiserror = "2"
+pinyin = "0.11"
+quick-xml = "0.42"
+lindera = { version = "6", optional = true, features = ["embed-ipadic"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+strip = true

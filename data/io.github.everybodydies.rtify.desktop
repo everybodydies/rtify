@@ -1,0 +1,33 @@
+[Desktop Entry]
+Type=Application
+Name=rtify
+GenericName=Spotify Connect companion
+Comment=Control Spotify Connect devices with a System24 look, tray, global shortcuts and lyrics
+Exec=rtify %U
+Icon=io.github.everybodydies.rtify
+Terminal=false
+Categories=Audio;AudioVideo;Player;GTK;
+Keywords=spotify;music;lyrics;player;
+StartupNotify=true
+SingleMainWindow=true
+Actions=play-pause;next;previous;toggle-lyrics;quit;
+
+[Desktop Action play-pause]
+Name=Play/Pause
+Exec=rtify --play-pause
+
+[Desktop Action next]
+Name=Next
+Exec=rtify --next
+
+[Desktop Action previous]
+Name=Previous
+Exec=rtify --previous
+
+[Desktop Action toggle-lyrics]
+Name=Lyrics
+Exec=rtify --toggle-lyrics
+
+[Desktop Action quit]
+Name=Quit
+Exec=rtify --quit
