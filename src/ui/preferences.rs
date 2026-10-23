@@ -15,7 +15,7 @@ fn row(title: &str, hint: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
     text.set_hexpand(true);
     text.append(&label(title, &[]));
     if !hint.is_empty() {
-        let h = label(hint, &["rt-faint"]);
+        let h = label(hint, &["rt-dim"]);
         h.set_wrap(true);
         text.append(&h);
     }
@@ -439,6 +439,11 @@ pub fn open(app: &App) {
 
     let content = vbox(12);
     content.add_css_class("rt-root");
+    // DESIGN.md: the same 12px gap to the window edge as between panels.
+    content.set_margin_top(12);
+    content.set_margin_bottom(12);
+    content.set_margin_start(12);
+    content.set_margin_end(12);
     for s in [appearance, background, playback, lyrics, account, shortcuts_section] {
         content.append(&s);
     }

@@ -323,7 +323,7 @@ impl Sidebar {
             let text = vbox(0);
             text.set_valign(gtk::Align::Center);
             text.append(&ellipsized(&c.name, &["rt-row-title"]));
-            text.append(&ellipsized(&c.subtitle, &["rt-faint", "rt-small"]));
+            text.append(&ellipsized(&c.subtitle, &["rt-dim", "rt-small"]));
             b.append(&text);
             row.set_child(Some(&b));
             row.set_tooltip_text(Some(&c.name));
@@ -339,7 +339,7 @@ impl Sidebar {
                 } else {
                     "no matches"
                 },
-                &["rt-faint"],
+                &["rt-dim"],
             ));
         }
         self.state.borrow_mut().shown = shown;

@@ -33,8 +33,8 @@ impl NowPlayingPanel {
         title.set_wrap(true);
         title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         let artist = ellipsized("", &["rt-dim"]);
-        let album = ellipsized("", &["rt-faint", "rt-small"]);
-        let device = ellipsized("", &["rt-faint", "rt-small"]);
+        let album = ellipsized("", &["rt-dim", "rt-small"]);
+        let device = ellipsized("", &["rt-dim", "rt-small"]);
 
         let queue = gtk::ListBox::new();
         queue.add_css_class("rt-list");
@@ -95,7 +95,7 @@ impl NowPlayingPanel {
     pub fn set_queue(&self, tracks: &[Track]) {
         clear_list(&self.queue);
         if tracks.is_empty() {
-            self.queue.append(&label("queue is empty", &["rt-faint", "rt-small"]));
+            self.queue.append(&label("queue is empty", &["rt-dim", "rt-small"]));
             return;
         }
         for t in tracks.iter().take(12) {
@@ -108,7 +108,7 @@ impl NowPlayingPanel {
             row.append(&pic);
             let meta = vbox(0);
             meta.append(&ellipsized(&t.name, &["rt-small"]));
-            meta.append(&ellipsized(&t.artist_names(), &["rt-faint", "rt-small"]));
+            meta.append(&ellipsized(&t.artist_names(), &["rt-dim", "rt-small"]));
             row.append(&meta);
             self.queue.append(&row);
         }

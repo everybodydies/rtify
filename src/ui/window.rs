@@ -80,7 +80,7 @@ impl LoginPane {
         client_id.set_text(&app.config.borrow().config.spotify.client_id);
         let button = button("sign in with spotify", "");
         button.add_css_class("rt-primary");
-        let status = label("", &["rt-faint"]);
+        let status = label("", &["rt-dim"]);
         status.set_wrap(true);
         for w in [
             intro.upcast_ref::<gtk::Widget>(),
@@ -133,7 +133,8 @@ impl MainWindow {
         left.append(&forward);
         let search = gtk::SearchEntry::new();
         search.add_css_class("rt-search");
-        search.set_placeholder_text(Some("what do you want to play?   (Ctrl+L)"));
+        search.set_placeholder_text(Some("what do you want to play?"));
+        search.set_tooltip_text(Some("Search Spotify (Ctrl+L)"));
         search.set_size_request(460, -1);
         let status_dot = label("○", &["rt-status-offline"]);
         let status = label("offline", &["rt-status-offline", "rt-small"]);

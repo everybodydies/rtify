@@ -201,7 +201,7 @@ impl CollectionView {
         let title = label("", &["rt-hero"]);
         title.set_ellipsize(gtk::pango::EllipsizeMode::End);
         let subtitle = label("", &["rt-dim"]);
-        let description = label("", &["rt-faint"]);
+        let description = label("", &["rt-dim"]);
         description.set_ellipsize(gtk::pango::EllipsizeMode::End);
         let meta = vbox(4);
         meta.set_valign(gtk::Align::End);
@@ -219,7 +219,8 @@ impl CollectionView {
         shuffle.add_css_class("rt-chip");
         let filter = gtk::SearchEntry::new();
         filter.add_css_class("rt-filter");
-        filter.set_placeholder_text(Some("search in list  (Ctrl+F)"));
+        filter.set_placeholder_text(Some("search in list"));
+        filter.set_tooltip_text(Some("Search in this list (Ctrl+F)"));
         filter.set_width_chars(26);
         let actions = hbox(10);
         actions.append(&play);
@@ -270,7 +271,7 @@ impl CollectionView {
         table.set_selection_mode(gtk::SelectionMode::Multiple);
         table.set_activate_on_single_click(false);
         table.add_css_class("rt-menu-host");
-        let status = label("", &["rt-faint"]);
+        let status = label("", &["rt-dim"]);
         status.set_margin_top(8);
 
         let content = vbox(14);
@@ -534,7 +535,7 @@ impl CollectionView {
             let name = ellipsized(&col.name, &["rt-row-title"]);
             name.set_max_width_chars(16);
             card.append(&name);
-            let sub = ellipsized(&col.subtitle, &["rt-faint", "rt-small"]);
+            let sub = ellipsized(&col.subtitle, &["rt-dim", "rt-small"]);
             sub.set_max_width_chars(16);
             card.append(&sub);
             let b = gtk::Button::new();
@@ -837,7 +838,33 @@ impl CollectionView {
         }
     }
 
+    /// Number the rows the in-list search leaves visible 1, 2, 3… (all rows when it is empty).
+    fn renumber(&self) {
+        let st = self.state.borrow();
+        let mut n = 0;
+        let mut child = self.table.first_child();
+        while let Some(w) = child {
+            if let Some(row) = w.downcast_ref::<gtk::ListBoxRow>() {
+                let shown = st
+                    .display
+                    .get(row.index() as usize)
+                    .and_then(|&i| st.rows.get(i))
+                    .is_none_or(|r| matches_filter(r, &st.filter));
+                let num = row
+                    .child()
+                    .and_then(|b| b.first_child())
+                    .and_then(|l| l.downcast::<gtk::Label>().ok());
+                if shown && let Some(num) = num.filter(|l| l.has_css_class("rt-row-num")) {
+                    n += 1;
+                    num.set_text(&n.to_string());
+                }
+            }
+            child = w.next_sibling();
+        }
+    }
+
     fn update_status(&self) {
+        self.renumber();
         let st = self.state.borrow();
         let Some(c) = &st.collection else { return };
         let total: u64 = st.rows.iter().map(|r| r.track.duration_ms).sum();

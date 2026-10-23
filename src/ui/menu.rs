@@ -119,7 +119,7 @@ impl Menu {
             buttons.push((name.to_lowercase(), b));
         }
         if buttons.is_empty() {
-            list.append(&label("  no playlists you can edit", &["rt-faint"]));
+            list.append(&label("  no playlists you can edit", &["rt-dim"]));
         }
         filter.connect_search_changed(move |e| {
             let q = e.text().to_lowercase();

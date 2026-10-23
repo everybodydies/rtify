@@ -382,14 +382,14 @@ impl PlayerBar {
         clear_list(&self.devices);
         if devices.is_empty() {
             self.devices
-                .append(&label("no devices — open Spotify on a phone, speaker or computer", &["rt-faint"]));
+                .append(&label("no devices — open Spotify on a phone, speaker or computer", &["rt-dim"]));
             return;
         }
         for d in devices {
             let row = hbox(8);
             row.append(&label(
                 if d.is_active { "◉" } else { "○" },
-                &[if d.is_active { "rt-accent" } else { "rt-faint" }],
+                &[if d.is_active { "rt-accent" } else { "rt-dim" }],
             ));
             let meta = vbox(0);
             meta.set_hexpand(true);
@@ -401,7 +401,7 @@ impl PlayerBar {
             if d.is_restricted {
                 sub.push_str(" · restricted");
             }
-            meta.append(&label(&sub, &["rt-faint", "rt-small"]));
+            meta.append(&label(&sub, &["rt-dim", "rt-small"]));
             row.append(&meta);
             self.devices.append(&row);
         }
