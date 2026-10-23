@@ -46,7 +46,7 @@ impl NowPlayingPanel {
         body.append(&artist);
         body.append(&album);
         body.append(&device);
-        body.append(&label("[ NEXT UP ]", &["rt-section"]));
+        body.append(&label("next up", &["rt-section"]));
         body.append(&queue);
         let scroll = gtk::ScrolledWindow::builder()
             .child(&body)

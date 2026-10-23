@@ -33,13 +33,13 @@ the desktop client) through the Web API. It does not play audio itself.
 ## Layout
 
 ```
-┌ ◀ ▶ [ RTIFY ]            [ what do you want to play? ]              ● you  ⚙ ▭ — ┐
-│ [ YOUR LIBRARY ]  │ [ PLAYLIST ]                              │ [ NOW PLAYING ]   │
-│ playlists albums  │ ┌────┐ PLAYLIST                           │ ┌───────────────┐ │
+┌ ◀ ▶                      [ what do you want to play? ]              ■ you  ⚙ ▭ — ┐
+│ ─ your library ─  │ ─ playlist ─────────────────────────────  │ ─ now playing ─── │
+│ playlists albums  │ ┌────┐                                    │ ┌───────────────┐ │
 │ filter            │ │    │ Coding Nights                      │ │     cover     │ │
 │ ♥ Liked Songs     │ └────┘ Demo · 24 songs                    │ └───────────────┘ │
-│ ▣ Coding Nights   │ [▶ PLAY] [⇄ shuffle]                      │ title / artist    │
-│ ▣ Autobahn        │ #  TITLE            ALBUM     ADDED  TIME │ [ NEXT UP ]       │
+│ ▣ Coding Nights   │ [▶ play] [⇄ shuffle]                      │ title / artist    │
+│ ▣ Autobahn        │ #  title            album     added  time │ next up           │
 │ …                 │ 1  ▣ Neon Rain      Midnight… 09-01  2:30 │ ▣ …               │
 ├───────────────────┴───────────────────────────────────────────┴───────────────────┤
 │ ▣ title ♡             ⇄  ◀◀  [❚❚]  ▶▶  ↻   1:29 ━━━━━━━━── 3:01   lyrics ▤ ⌁ vol ━ │
@@ -51,9 +51,11 @@ with back/forward (`Alt+←/→`, mouse side buttons). `▤` toggles the now-pla
 Spotify Connect device, `▭` turns the window into a mini player. The sidebar width and panel state
 persist.
 
-**OLED black** (Settings → appearance, on by default) turns every surface true black, keeps
-borders at hairline brightness, draws accent controls as outlines instead of filled blocks, and
-drops the lyrics glow. Text sits slightly below full white.
+**OLED black** (Settings → appearance, on by default) is the look described in
+[DESIGN.md](DESIGN.md), "system24 OLED": true-black panels and gaps, structure only from 2px
+frames with a lowercase label in the top line, achromatic OKLCH greys with text capped at 90 %
+lightness, and one pastel accent for focus, hover and the primary button. Only the accent's hue
+follows the palette source (fixed, Noctalia or album art). The typeface, DM Mono, is bundled.
 
 ## Install
 

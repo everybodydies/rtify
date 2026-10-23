@@ -144,7 +144,7 @@ pub fn open(app: &App) {
             ),
             row(
                 "OLED black",
-                "true-black surfaces, hairline borders, outlined controls; overrides the palette's background",
+                "system24 OLED from DESIGN.md: true black, framed panels, dimmed text; only the accent hue follows the palette",
                 &switch(app, c.appearance.oled, |_, c, on| c.appearance.oled = on),
             ),
             row(

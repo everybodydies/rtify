@@ -2,7 +2,7 @@
 
 use gtk::prelude::*;
 
-/// A titled panel: the title sits on the top border line, like System24's `[ TITLE ]` frames.
+/// A titled panel: a short lowercase label sits on the top border line, like a TUI window title.
 /// (GtkFrame draws its label inside the border, so this is an overlay instead.)
 #[derive(Clone)]
 pub struct Panel {
@@ -29,6 +29,7 @@ pub fn panel(title: &str, child: &impl IsA<gtk::Widget>) -> Panel {
     title_label.set_valign(gtk::Align::Start);
     title_label.set_margin_start(12);
     let root = gtk::Overlay::new();
+    root.add_css_class("rt-panel-host");
     root.set_child(Some(&body));
     root.add_overlay(&title_label);
     root.set_measure_overlay(&title_label, false);
@@ -36,7 +37,7 @@ pub fn panel(title: &str, child: &impl IsA<gtk::Widget>) -> Panel {
 }
 
 pub fn panel_title(title: &str) -> String {
-    format!("[ {} ]", title.to_uppercase())
+    title.to_lowercase()
 }
 
 pub fn label(text: &str, classes: &[&str]) -> gtk::Label {
@@ -119,6 +120,6 @@ mod tests {
         assert_eq!(super::fmt_time(0), "0:00");
         assert_eq!(super::fmt_time(61_999), "1:01");
         assert_eq!(super::fmt_time(3_723_000), "1:02:03");
-        assert_eq!(super::panel_title("now playing"), "[ NOW PLAYING ]");
+        assert_eq!(super::panel_title("now playing"), "now playing");
     }
 }

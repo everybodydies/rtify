@@ -114,7 +114,7 @@ impl PlayerBar {
         devices.add_css_class("rt-list");
         let dev_box = vbox(6);
         dev_box.set_size_request(280, -1);
-        dev_box.append(&label("[ CONNECT TO A DEVICE ]", &["rt-section"]));
+        dev_box.append(&label("connect to a device", &["rt-section"]));
         dev_box.append(&devices);
         let popover = gtk::Popover::new();
         popover.set_child(Some(&dev_box));

@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+- Look follows [DESIGN.md](DESIGN.md) ("system24 OLED"): OKLCH greys on true black, 2px panel
+  frames with lowercase labels that take the accent on hover/focus, 12px gaps, text capped at
+  90 % lightness, one filled primary button, square status marker. DM Mono is bundled.
+- Lyrics come only from LRCLIB; the bundled demo songs are a development feature (`demo`).
+- Context menus: the "add to playlist" submenu takes its own size, and closing a menu no longer
+  scrolls the list to its end.
+
 ## [0.1.0] - 2026-10-22
 
 First release.

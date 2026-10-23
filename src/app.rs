@@ -137,6 +137,7 @@ fn demo_mode() -> bool {
 }
 
 pub fn run(args: Vec<String>) -> glib::ExitCode {
+    crate::theme::fonts::register_bundled(&paths::cache_dir().join("fonts"));
     let gtk_app = gtk::Application::builder()
         .application_id(APP_ID)
         .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)

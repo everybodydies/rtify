@@ -78,7 +78,7 @@ impl LoginPane {
         let client_id = gtk::Entry::new();
         client_id.set_placeholder_text(Some("client ID"));
         client_id.set_text(&app.config.borrow().config.spotify.client_id);
-        let button = button("SIGN IN WITH SPOTIFY", "");
+        let button = button("sign in with spotify", "");
         button.add_css_class("rt-primary");
         let status = label("", &["rt-faint"]);
         status.set_wrap(true);
@@ -364,7 +364,7 @@ impl MainWindow {
             (true, None) => "online".into(),
             (false, _) => "offline".into(),
         });
-        self.status_dot.set_text(if online { "●" } else { "○" });
+        self.status_dot.set_text(if online { "■" } else { "□" });
         let class = if online { "rt-status-online" } else { "rt-status-offline" };
         self.status.set_css_classes(&[class, "rt-small"]);
         self.status_dot.set_css_classes(&[class, "rt-dot"]);

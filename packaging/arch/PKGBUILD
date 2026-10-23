@@ -5,7 +5,7 @@ pkgrel=1
 pkgdesc="Spotify Connect companion: System24/OLED look, tray, global shortcuts, animated lyrics"
 arch=('x86_64')
 url="https://github.com/everybodydies/rtify"
-license=('GPL-3.0-or-later')
+license=('GPL-3.0-or-later' 'OFL-1.1')
 depends=('gtk4' 'dbus' 'gcc-libs' 'glibc')
 makedepends=('cargo')
 optdepends=(
@@ -43,5 +43,6 @@ package() {
   install -Dm644 data/io.github.everybodydies.rtify.desktop -t "$pkgdir/usr/share/applications"
   install -Dm644 data/icons/io.github.everybodydies.rtify.svg -t "$pkgdir/usr/share/icons/hicolor/scalable/apps"
   install -Dm644 data/noctalia/rtify.css data/noctalia/templates.toml -t "$pkgdir/usr/share/rtify/noctalia"
-  install -Dm644 README.md CHANGELOG.md -t "$pkgdir/usr/share/doc/rtify"
+  install -Dm644 README.md CHANGELOG.md DESIGN.md -t "$pkgdir/usr/share/doc/rtify"
+  install -Dm644 data/fonts/OFL.txt "$pkgdir/usr/share/licenses/rtify/DM-Mono-OFL.txt"
 }

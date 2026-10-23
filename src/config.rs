@@ -80,10 +80,10 @@ impl Default for Appearance {
         Self {
             style: "system24".into(),
             palette_source: PaletteSource::Fixed,
-            fixed_accent: "#b99aff".into(),
+            fixed_accent: "#b589d6".into(),
             fixed_background: String::new(),
             light: false,
-            font_family: "JetBrains Mono, monospace".into(),
+            font_family: "DM Mono, JetBrains Mono, monospace".into(),
             font_size: 11,
             animations_enabled: true,
             reduced_motion: false,

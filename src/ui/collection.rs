@@ -213,7 +213,7 @@ impl CollectionView {
         header.append(&cover);
         header.append(&meta);
 
-        let play = button("▶  PLAY", "Play from the top");
+        let play = button("▶  play", "Play from the top");
         play.add_css_class("rt-primary");
         let shuffle = button("⇄ shuffle", "Shuffle play");
         shuffle.add_css_class("rt-chip");
@@ -235,7 +235,7 @@ impl CollectionView {
         cards.set_row_spacing(14);
         cards.set_homogeneous(true);
         cards.add_css_class("rt-menu-host");
-        let songs_title = label("[ SONGS ]", &["rt-section"]);
+        let songs_title = label("songs", &["rt-section"]);
 
         // Sortable column headers; widths match the row cells below.
         let head = hbox(12);
@@ -243,11 +243,11 @@ impl CollectionView {
         let num = header_button("#", 3, 1.0);
         let thumb_gap = hbox(0);
         thumb_gap.set_size_request(36, -1);
-        let t = header_button("TITLE", 0, 0.0);
+        let t = header_button("title", 0, 0.0);
         t.set_hexpand(true);
-        let album = header_button("ALBUM", 26, 0.0);
-        let added = header_button("ADDED", 11, 0.0);
-        let time = header_button("TIME", 6, 1.0);
+        let album = header_button("album", 26, 0.0);
+        let added = header_button("added", 11, 0.0);
+        let time = header_button("time", 6, 1.0);
         let plus_gap = hbox(0);
         plus_gap.set_size_request(26, -1);
         head.append(&num);
@@ -259,10 +259,10 @@ impl CollectionView {
         head.append(&plus_gap);
         let headers = Rc::new(vec![
             (SortKey::Custom, num, "#"),
-            (SortKey::Title, t, "TITLE"),
-            (SortKey::Album, album, "ALBUM"),
-            (SortKey::Added, added, "ADDED"),
-            (SortKey::Duration, time, "TIME"),
+            (SortKey::Title, t, "title"),
+            (SortKey::Album, album, "album"),
+            (SortKey::Added, added, "added"),
+            (SortKey::Duration, time, "time"),
         ]);
 
         let table = gtk::ListBox::new();
