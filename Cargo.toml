@@ -13,6 +13,9 @@ default = ["japanese-kanji"]
 # Kanji readings via Lindera's embedded IPADIC dictionary (adds the dictionary to the binary;
 # build with --no-default-features for a small binary that romanizes kana only).
 japanese-kanji = ["dep:lindera"]
+# Three bundled demo songs in the lyrics `⋯` menu, for trying the renderer without Spotify.
+# Development only: release builds and the pacman package leave it off.
+demo = []
 
 [dependencies]
 gtk = { package = "gtk4", version = "0.11", features = ["v4_14"] }

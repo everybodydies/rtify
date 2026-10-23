@@ -15,7 +15,9 @@ use crate::config::{Config, Notifications};
 use crate::desktop::mpris::{self, MprisEvent, MprisHandle, MprisState};
 use crate::desktop::shortcuts::{self, ShortcutEvent};
 use crate::desktop::tray::{self, TrayHandle, TrayState};
-use crate::lyrics::provider::{TrackQuery, demo};
+use crate::lyrics::provider::TrackQuery;
+#[cfg(feature = "demo")]
+use crate::lyrics::provider::demo;
 use crate::lyrics::synchronization::LyricClock;
 use crate::lyrics::{LyricDocument, google, lrclib, romanization, translation};
 use crate::paths::{self, APP_ID};
@@ -47,6 +49,7 @@ const LYRIC_LEAD_MS: u64 = 250;
 #[derive(Debug, Clone, PartialEq)]
 enum LyricsSource {
     None,
+    #[cfg(feature = "demo")]
     Demo(usize),
     /// Lyrics for the playing Spotify track (LRCLIB), keyed by track.
     Track(String),
@@ -1921,6 +1924,7 @@ impl App {
     }
 
     /// `autoplay`: start the local clock right away (user picked the song).
+    #[cfg(feature = "demo")]
     pub fn open_demo_lyrics(&self, index: usize, autoplay: bool) {
         let doc = demo::song(index);
         let label = doc
@@ -2023,7 +2027,10 @@ impl App {
         if self.config.borrow().config.lyrics.follow_playback {
             self.load_track_lyrics();
         } else {
+            #[cfg(feature = "demo")]
             self.open_demo_lyrics(0, false);
+            #[cfg(not(feature = "demo"))]
+            self.show_lyrics(None, LyricsSource::None, "", self.lyric_clock());
         }
     }
 

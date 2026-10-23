@@ -81,8 +81,8 @@ install -Dm644 data/io.github.everybodydies.rtify.desktop -t ~/.local/share/appl
 install -Dm644 data/icons/io.github.everybodydies.rtify.svg -t ~/.local/share/icons/hicolor/scalable/apps
 ```
 
-For kanji romanization, build with `cargo build --release --features japanese-kanji`. That
-embeds the IPADIC dictionary, so the binary gets much larger.
+Kanji romanization is on by default and embeds the IPADIC dictionary, which makes the binary
+much larger. Build with `--no-default-features` to leave it out (kana are still romanized).
 
 ### Try it without a Spotify account
 
@@ -92,6 +92,8 @@ dev/run-demo.sh --headless out  # same under Xvfb, writes screenshots to out/
 ```
 
 `dev/demo-server.py` is the mock Web API shared with qtify (Python standard library only).
+`run-demo.sh` builds with the `demo` feature, which adds three bundled demo songs to the lyrics
+`⋯` menu. Normal builds and the pacman package leave them out.
 
 ### Spotify setup (once)
 
@@ -218,8 +220,9 @@ The renderer draws the whole document with Pango in one custom widget:
   song (no key), which also romanizes scripts rtify has no offline romanizer for. Or DeepL with
   your own API key (Settings → lyrics). The lyrics text is sent to the provider you chose.
 
-The `⋯` menu also plays three bundled **demo songs** (original text written for this project)
-against a local clock, to try the renderer without Spotify.
+Development builds with `--features demo` add three bundled **demo songs** to the `⋯` menu
+(original text written for this project), played against a local clock to try the renderer
+without Spotify.
 
 ## Files
 

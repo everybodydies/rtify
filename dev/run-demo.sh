@@ -11,7 +11,7 @@ port=${RTIFY_DEMO_PORT:-8765}
 tmp=$(mktemp -d)
 trap 'kill $(jobs -p) 2>/dev/null || true; rm -rf "$tmp"' EXIT
 
-cargo build --quiet
+cargo build --quiet --features demo
 python3 dev/demo-server.py --port "$port" >"$tmp/server.log" 2>&1 &
 for _ in $(seq 50); do curl -fs "http://127.0.0.1:$port/v1/me" >/dev/null 2>&1 && break; sleep 0.1; done
 

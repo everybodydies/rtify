@@ -1,7 +1,7 @@
 //! Track identity for lyric lookups, text parsing, and the bundled demo songs.
 //! Lyrics for Spotify tracks come from LRCLIB (see `lrclib`).
 
-use super::model::{Attribution, LyricDocument};
+use super::model::LyricDocument;
 use super::{lrc, ttml};
 
 #[derive(Debug, Clone, Default)]
@@ -35,8 +35,10 @@ pub fn parse_text(text: &str) -> Result<LyricDocument, ttml::TtmlError> {
 }
 
 /// Short original songs written for rtify, used to develop and demonstrate the renderer.
+#[cfg(any(test, feature = "demo"))]
 pub mod demo {
     use super::*;
+    use crate::lyrics::model::Attribution;
 
     pub const SONGS: &[(&str, &str, &str)] = &[
         ("Neon Harbor", "The Placeholders", include_str!("../../data/demo/neon-harbor.ttml")),

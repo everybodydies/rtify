@@ -12,6 +12,7 @@ use gtk::{glib, prelude::*};
 use super::widgets::*;
 use crate::app::App;
 use crate::lyrics::LyricDocument;
+#[cfg(feature = "demo")]
 use crate::lyrics::provider::demo;
 use view::{Clock, LyricsView, ViewOptions};
 
@@ -28,6 +29,7 @@ pub struct LyricsPage {
     translated: gtk::ToggleButton,
     follow: gtk::CheckButton,
     offset: gtk::Label,
+    #[cfg(feature = "demo")]
     demo_index: Rc<Cell<usize>>,
     updating: Rc<Cell<bool>>,
 }
@@ -47,7 +49,6 @@ impl LyricsPage {
 
         // ⋯ menu.
         let follow = gtk::CheckButton::with_label("follow Spotify playback");
-        let demo_btn = button("play a demo song", "");
         let minus = button("−", "Show lines later");
         let plus = button("+", "Show lines earlier");
         let offset = label("", &["rt-mono-num"]);
@@ -59,9 +60,12 @@ impl LyricsPage {
         offset_row.append(&plus);
         let menu_box = vbox(6);
         menu_box.set_size_request(240, -1);
-        for w in [follow.upcast_ref::<gtk::Widget>(), offset_row.upcast_ref(), demo_btn.upcast_ref()] {
-            menu_box.append(w);
-        }
+        menu_box.append(&follow);
+        menu_box.append(&offset_row);
+        #[cfg(feature = "demo")]
+        let demo_btn = button("play a demo song", "");
+        #[cfg(feature = "demo")]
+        menu_box.append(&demo_btn);
         let popover = gtk::Popover::new();
         popover.set_child(Some(&menu_box));
         let more = gtk::MenuButton::builder()
@@ -104,11 +108,14 @@ impl LyricsPage {
             translated: translated.clone(),
             follow: follow.clone(),
             offset,
+            #[cfg(feature = "demo")]
             demo_index: Rc::new(Cell::new(0)),
             updating: Rc::new(Cell::new(false)),
         };
 
+        #[cfg(feature = "demo")]
         let (page, a, pop) = (this.clone(), app.clone(), popover.clone());
+        #[cfg(feature = "demo")]
         demo_btn.connect_clicked(move |_| {
             pop.popdown();
             let i = page.demo_index.get();
