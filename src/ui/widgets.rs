@@ -134,6 +134,44 @@ pub fn clear_list(list: &gtk::ListBox) {
     }
 }
 
+/// Tab and Shift+Tab leave the list instead of walking through every row (GtkListBox treats
+/// Tab like the arrow keys); the arrows still move between rows.
+pub fn tab_leaves(list: &gtk::ListBox) {
+    let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let weak = list.downgrade();
+    keys.connect_key_pressed(move |_, key, _, mods| {
+        let backward = match key {
+            gtk::gdk::Key::ISO_Left_Tab => true,
+            gtk::gdk::Key::Tab | gtk::gdk::Key::KP_Tab => mods.contains(gtk::gdk::ModifierType::SHIFT_MASK),
+            _ => return gtk::glib::Propagation::Proceed,
+        };
+        let (Some(list), dir) = (
+            weak.upgrade(),
+            if backward {
+                gtk::DirectionType::TabBackward
+            } else {
+                gtk::DirectionType::TabForward
+            },
+        ) else {
+            return gtk::glib::Propagation::Proceed;
+        };
+        let Some(root) = list.root() else {
+            return gtk::glib::Propagation::Proceed;
+        };
+        // While the list cannot take focus, the window's focus chain steps over it.
+        list.set_can_focus(false);
+        let moved = root.child_focus(dir);
+        list.set_can_focus(true);
+        if moved {
+            gtk::glib::Propagation::Stop
+        } else {
+            gtk::glib::Propagation::Proceed
+        }
+    });
+    list.add_controller(keys);
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

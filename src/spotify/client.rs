@@ -44,6 +44,25 @@ impl ApiError {
     pub fn needs_premium(&self) -> bool {
         matches!(self, ApiError::Status(403, m) if m.to_lowercase().contains("premium"))
     }
+
+    /// Spotify no longer accepts the login (refresh token revoked or expired, or no token at
+    /// all): only signing in again helps.
+    pub fn is_signed_out(&self) -> bool {
+        match self {
+            ApiError::NotLoggedIn | ApiError::Auth(AuthError::Rejected(_)) => true,
+            // Still 401 with a freshly refreshed token.
+            ApiError::Status(401, _) => !self.is_scope(),
+            _ => false,
+        }
+    }
+
+    /// Spotify could not be reached at all (no network, DNS, refused, timed out).
+    pub fn is_offline(&self) -> bool {
+        match self {
+            ApiError::Http(e) | ApiError::Auth(AuthError::Http(e)) => e.is_connect() || e.is_timeout() || e.is_request(),
+            _ => false,
+        }
+    }
 }
 
 /// Called with the new refresh token whenever Spotify rotates it, so it can be persisted.
@@ -179,9 +198,6 @@ impl SpotifyClient {
             };
             let resp = req.timeout(Duration::from_secs(15)).send().await?;
             let status = resp.status();
-            if status == StatusCode::UNAUTHORIZED && attempt == 0 {
-                continue;
-            }
             if status == StatusCode::TOO_MANY_REQUESTS {
                 let wait = resp
                     .headers()
@@ -201,7 +217,13 @@ impl SpotifyClient {
                 } else {
                     msg
                 };
-                return Err(ApiError::Status(status.as_u16(), msg));
+                let e = ApiError::Status(status.as_u16(), msg);
+                // An expired access token: refresh it and try once more. A missing permission
+                // stays missing with a new token.
+                if status == StatusCode::UNAUTHORIZED && attempt == 0 && !e.is_scope() {
+                    continue;
+                }
+                return Err(e);
             }
             if status == StatusCode::NO_CONTENT || bytes.is_empty() {
                 return Ok(None);

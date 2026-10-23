@@ -24,8 +24,10 @@ use crate::paths::{self, APP_ID};
 use crate::persistence::{ConfigStore, SessionStore};
 use crate::runtime::{self, rt, spawn_then};
 use crate::services::artwork::Artwork;
+use crate::services::history::History;
 use crate::services::playback::{Playback, ReconnectStep, Repeat, reconnect_plan};
 use crate::services::polling::{PollInputs, next_poll};
+use crate::services::undo::{self, UndoStack};
 use crate::spotify::model::{Device, Track, pick_image};
 use crate::spotify::{ApiError, PlayRequest, SpotifyClient, auth, tokens};
 use crate::theme::manager::ThemeManager;
@@ -58,25 +60,24 @@ enum LyricsSource {
 /// Rows and the next page offset of a loaded collection.
 type TrackPage = (Vec<TrackRow>, Option<u32>);
 
-/// A playlist change that Ctrl+Z (or the toast) can revert.
-#[derive(Debug, Clone)]
-enum UndoOp {
-    Added {
-        playlist: Collection,
-        uris: Vec<String>,
-    },
-    /// `(uri, position)` in the playlist's order before removal.
-    Removed {
-        playlist: Collection,
-        entries: Vec<(String, u32)>,
-    },
-}
+type UndoOp = undo::UndoOp<Collection>;
 
 /// Back/forward history of the main view.
 #[derive(Debug, Clone)]
 enum Nav {
     Collection(Collection),
     Search(String),
+}
+
+impl PartialEq for Nav {
+    /// The same place, even if the entry learned more about it (owner, images) since.
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Nav::Collection(a), Nav::Collection(b)) => a.uri == b.uri,
+            (Nav::Search(a), Nav::Search(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 pub struct Inner {
@@ -113,9 +114,10 @@ pub struct Inner {
     translations: RefCell<std::collections::HashMap<String, LyricDocument>>,
     deepl_key: RefCell<Option<String>>,
     pub shortcut_status: RefCell<String>,
-    history: RefCell<Vec<Nav>>,
-    undo: RefCell<Vec<UndoOp>>,
-    history_pos: Cell<usize>,
+    history: RefCell<History<Nav>>,
+    undo: RefCell<UndoStack<Collection>>,
+    /// Failed attempts to reach Spotify while signing in at startup (retried with backoff).
+    connect_attempts: Cell<u32>,
 }
 
 #[derive(Clone)]
@@ -130,6 +132,23 @@ impl Deref for App {
 
 thread_local! {
     static APP: OnceCell<App> = const { OnceCell::new() };
+}
+
+/// An API error in words that say what to do about it.
+fn explain(e: &ApiError) -> String {
+    if e.is_scope() {
+        "Spotify needs new permissions for this — sign out in settings and sign in again".to_owned()
+    } else if e.is_no_device() {
+        "no active Spotify device — start Spotify somewhere or pick a device under [ DEVICES ]".to_owned()
+    } else if e.needs_premium() {
+        "this needs Spotify Premium".to_owned()
+    } else if let ApiError::RateLimited(s) = e {
+        format!("Spotify asks to slow down · try again in {s} s")
+    } else if e.is_offline() {
+        "cannot reach Spotify · check the connection".to_owned()
+    } else {
+        e.to_string()
+    }
 }
 
 fn demo_mode() -> bool {
@@ -202,7 +221,7 @@ impl App {
             shortcut_status: RefCell::new("not registered".into()),
             history: RefCell::default(),
             undo: RefCell::default(),
-            history_pos: Cell::new(0),
+            connect_attempts: Cell::new(0),
         }));
         // Background operation: the process outlives its window until Quit.
         *app.hold.borrow_mut() = Some(gtk_app.hold());
@@ -600,23 +619,44 @@ impl App {
             async move {
                 let refresh = match tokens::load(tokens::SPOTIFY_REFRESH, &client_id).await {
                     Ok(Some(r)) => r,
-                    Ok(None) => return Err("not signed in yet".to_owned()),
-                    Err(e) => return Err(format!("Secret Service unavailable ({e}); sign in again")),
+                    Ok(None) => return Err((false, "not signed in yet".to_owned())),
+                    Err(e) => return Err((false, format!("Secret Service unavailable ({e}); sign in again"))),
                 };
-                let token = auth::refresh(client.http(), &client_id, &refresh)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let token = auth::refresh(client.http(), &client_id, &refresh).await.map_err(|e| {
+                    let e = ApiError::Auth(e);
+                    (e.is_offline(), e.to_string())
+                })?;
                 client.set_token(Some(token)).await;
                 Ok(())
             },
-            move |r: Result<(), String>| match r {
+            // `offline`: the stored login is fine, Spotify just cannot be reached right now.
+            move |r: Result<(), (bool, String)>| match r {
                 Ok(()) => app.logged_in_ok(),
-                Err(e) => {
+                Err((true, _)) => app.retry_connect(Self::connect_spotify),
+                Err((false, e)) => {
                     app.win().login.status.set_text(&e);
                     app.win().show_page("login");
                 }
             },
         );
+    }
+
+    /// Spotify cannot be reached while signing in: keep the last-known state on screen and try
+    /// again with backoff (5 s, 10 s, … up to a minute) instead of asking to sign in again.
+    fn retry_connect(&self, again: fn(&App)) {
+        let attempt = self.connect_attempts.get() + 1;
+        self.connect_attempts.set(attempt);
+        let secs = (5u64 << (attempt - 1).min(4)).min(60);
+        self.win().set_online(false, None);
+        self.win()
+            .login
+            .status
+            .set_text(&format!("cannot reach Spotify · retrying in {secs} s"));
+        if attempt == 1 {
+            self.notice("cannot reach Spotify · showing the last known state, retrying", true);
+        }
+        let app = self.clone();
+        glib::timeout_add_local_once(Duration::from_secs(secs), move || again(&app));
     }
 
     pub fn login(&self, client_id: &str) {
@@ -704,6 +744,9 @@ impl App {
         let app = self.clone();
         spawn_then(async move { client.me().await }, move |r| match r {
             Ok(me) => {
+                if app.connect_attempts.replace(0) > 0 {
+                    app.notice("", false);
+                }
                 let who = me.display_name.clone().unwrap_or(me.id.clone());
                 *app.account.borrow_mut() = Some(me.id.clone());
                 *app.display_name.borrow_mut() = Some(who.clone());
@@ -729,9 +772,10 @@ impl App {
                     app.command(c);
                 }
             }
+            Err(e) if e.is_offline() => app.retry_connect(Self::logged_in_ok),
             Err(e) => {
                 app.logged_in.set(false);
-                app.win().login.status.set_text(&e.to_string());
+                app.win().login.status.set_text(&explain(&e));
                 app.win().show_page("login");
             }
         });
@@ -765,16 +809,20 @@ impl App {
                     if app.failures.get() > 0 {
                         app.win().set_online(true, app.display_name.borrow().as_deref());
                     }
+                    if app.failures.get() >= 2 {
+                        // Back online: drop the "cannot reach Spotify" banner.
+                        app.notice("", false);
+                    }
                     app.failures.set(0);
                     app.apply_state(Playback::from_remote(state));
                 }
                 Err(ApiError::RateLimited(s)) => app.retry_after.set(Some(Duration::from_secs(s))),
-                Err(ApiError::NotLoggedIn) => return,
+                Err(e) if e.is_signed_out() => return app.session_expired(),
                 Err(e) => {
                     app.failures.set(app.failures.get() + 1);
                     if app.failures.get() == 2 {
                         app.win().set_online(false, None);
-                        app.notice(&format!("cannot reach Spotify: {e}"), true);
+                        app.notice(&format!("{} · retrying", explain(&e)), true);
                     }
                 }
             }
@@ -950,18 +998,24 @@ impl App {
 
     fn after_command(&self, r: Result<(), ApiError>) {
         if let Err(e) = r {
-            let msg = if e.is_scope() {
-                "Spotify needs new permissions for this — sign out in settings and sign in again".to_owned()
-            } else if e.is_no_device() {
-                "no active Spotify device — start Spotify somewhere or pick a device under [ DEVICES ]".to_owned()
-            } else if e.needs_premium() {
-                "this needs Spotify Premium".to_owned()
-            } else {
-                e.to_string()
-            };
-            self.notice(&msg, true);
+            if e.is_signed_out() {
+                return self.session_expired();
+            }
+            self.notice(&explain(&e), true);
         }
         self.schedule_poll(Duration::from_millis(350));
+    }
+
+    /// Spotify no longer accepts the login: stop polling and ask to sign in again, keeping the
+    /// client ID.
+    fn session_expired(&self) {
+        if !self.logged_in.replace(false) {
+            return;
+        }
+        self.poll_gen.set(self.poll_gen.get() + 1);
+        self.win().set_online(false, None);
+        self.win().login.status.set_text("Spotify ended the session · sign in again");
+        self.win().show_page("login");
     }
 
     fn play_pause(&self) {
@@ -1018,7 +1072,19 @@ impl App {
                 };
                 self.saved_current.set(Some(on));
                 self.refresh_player_ui();
-                self.simple(move |c| async move { c.set_saved(&uri, on).await });
+                let client = self.client();
+                let app = self.clone();
+                let track = uri.clone();
+                spawn_then(async move { client.set_saved(&track, on).await }, move |r| {
+                    // The heart flipped right away; put it back if Spotify refused, unless the
+                    // track changed or the heart was clicked again meanwhile.
+                    let same = app.playback.borrow().track_uri() == Some(uri.as_str());
+                    if r.is_err() && same && app.saved_current.get() == Some(on) {
+                        app.saved_current.set(Some(!on));
+                        app.refresh_player_ui();
+                    }
+                    app.after_command(r);
+                });
             }
         }
     }
@@ -1135,7 +1201,7 @@ impl App {
                         .and_then(|a| app.session.borrow().data.accounts.get(a).and_then(|s| s.library_selection.clone()));
                     let restored = saved.filter(|u| u != SEARCH_URI).and_then(|uri| side.find(&uri));
                     if let Some(c) = restored.or_else(|| side.first_playlist()) {
-                        app.open_collection(c, true);
+                        app.show_collection(c, true, false);
                     }
                 }
                 Err(e) => app.notice(&format!("library: {e}"), true),
@@ -1150,6 +1216,12 @@ impl App {
     /// Show a collection in the main view and load its tracks. `record` adds it to back/forward.
     /// Revisits come from the cache, with the scroll position where you left it.
     pub fn open_collection(&self, c: Collection, record: bool) {
+        self.show_collection(c, record, true);
+    }
+
+    /// `switch_page`: bring the library page to the front (false when restoring at startup, so
+    /// a session that ended on the lyrics page comes back there).
+    fn show_collection(&self, c: Collection, record: bool, switch_page: bool) {
         // Prefer the full library entry (owner, images) when we only have a uri and a name.
         let c = self.win().sidebar.find(&c.uri).filter(|f| f.kind == c.kind).unwrap_or(c);
         if record {
@@ -1158,7 +1230,7 @@ impl App {
         let editable = self.is_editable(&c);
         let w = self.win();
         w.sidebar.mark_selected(Some(&c.uri));
-        if w.page() != "library" {
+        if switch_page && w.page() != "library" {
             w.show_page("library");
         }
         self.remember_selection(&c.uri);
@@ -1182,28 +1254,21 @@ impl App {
     }
 
     fn push_history(&self, nav: Nav) {
-        let mut h = self.history.borrow_mut();
-        let pos = self.history_pos.get();
-        h.truncate(pos + 1);
-        h.push(nav);
-        if h.len() > 50 {
-            h.remove(0);
-        }
-        self.history_pos.set(h.len() - 1);
-        let len = h.len();
-        drop(h);
-        self.win().set_history_buttons(len > 1, false);
+        let (back, forward) = {
+            let mut h = self.history.borrow_mut();
+            h.push(nav);
+            (h.can_back(), h.can_forward())
+        };
+        self.win().set_history_buttons(back, forward);
     }
 
     pub fn navigate_history(&self, delta: i32) {
-        let len = self.history.borrow().len();
-        let pos = self.history_pos.get() as i64 + delta as i64;
-        if pos < 0 || pos >= len as i64 {
-            return;
-        }
-        self.history_pos.set(pos as usize);
-        let nav = self.history.borrow()[pos as usize].clone();
-        self.win().set_history_buttons(pos > 0, (pos as usize) + 1 < len);
+        let (nav, back, forward) = {
+            let mut h = self.history.borrow_mut();
+            let Some(nav) = h.go(delta) else { return };
+            (nav, h.can_back(), h.can_forward())
+        };
+        self.win().set_history_buttons(back, forward);
         match nav {
             Nav::Collection(c) => self.open_collection(c, false),
             Nav::Search(q) => self.search(&q, false),
@@ -1551,6 +1616,8 @@ impl App {
                 let n = positions.len().max(uris.len());
                 app.win().collection.remove_uris(&p.uri, &uris);
                 app.win().sidebar.bump_count(&p.uri, -(n as i64));
+                // Without known positions there is nothing to put back, so no undo button.
+                let undoable = !positions.is_empty();
                 app.undo.borrow_mut().push(UndoOp::Removed {
                     playlist: p.clone(),
                     entries: positions,
@@ -1561,7 +1628,7 @@ impl App {
                         if n == 1 { "1 song".into() } else { format!("{n} songs") },
                         p.name
                     ),
-                    true,
+                    undoable,
                 );
             }
             Err(e) => app.after_command(Err(e)),
@@ -1581,7 +1648,8 @@ impl App {
         }
     }
 
-    /// Ctrl+Z / the toast's "undo": revert the last playlist change.
+    /// Ctrl+Z / the toast's "undo": revert the last playlist change. If Spotify refuses, the
+    /// change (or what is left of it) goes back on the stack, so Ctrl+Z can try again.
     pub fn undo(&self) {
         let Some(op) = self.undo.borrow_mut().pop() else {
             return self.toast("nothing to undo", false);
@@ -1592,36 +1660,52 @@ impl App {
             UndoOp::Added { playlist, uris } => {
                 let id = crate::spotify::client::uri_id(&playlist.uri).to_owned();
                 let n = uris.len() as i64;
-                spawn_then(async move { client.remove_from_playlist(&id, &uris).await }, move |r| match r {
+                let gone = uris.clone();
+                spawn_then(async move { client.remove_from_playlist(&id, &gone).await }, move |r| match r {
                     Ok(()) => {
                         app.after_playlist_edit(&playlist, -n);
                         app.toast(&format!("undone · removed again from “{}”", playlist.name), false);
                     }
-                    Err(e) => app.after_command(Err(e)),
+                    Err(e) => {
+                        app.undo.borrow_mut().push(UndoOp::Added { playlist, uris });
+                        app.undo_failed(e);
+                    }
                 });
             }
-            UndoOp::Removed { playlist, mut entries } => {
+            UndoOp::Removed { playlist, entries } => {
                 let id = crate::spotify::client::uri_id(&playlist.uri).to_owned();
-                entries.sort_by_key(|(_, pos)| *pos);
-                let n = entries.len() as i64;
+                let steps = undo::restore_steps(entries);
                 spawn_then(
                     async move {
-                        // Ascending positions: each insert lands where the song used to be.
-                        for (uri, pos) in &entries {
-                            client.add_to_playlist(&id, std::slice::from_ref(uri), Some(*pos)).await?;
+                        for (done, (uri, pos)) in steps.iter().enumerate() {
+                            if let Err(e) = client.add_to_playlist(&id, std::slice::from_ref(uri), Some(*pos)).await {
+                                return (done, Err((e, steps[done..].to_vec())));
+                            }
                         }
-                        Ok::<_, ApiError>(())
+                        (steps.len(), Ok(()))
                     },
-                    move |r| match r {
-                        Ok(()) => {
-                            app.after_playlist_edit(&playlist, n);
-                            app.toast(&format!("undone · restored in “{}”", playlist.name), false);
+                    move |(done, r)| {
+                        if done > 0 {
+                            app.after_playlist_edit(&playlist, done as i64);
                         }
-                        Err(e) => app.after_command(Err(e)),
+                        match r {
+                            Ok(()) => app.toast(&format!("undone · restored in “{}”", playlist.name), false),
+                            Err((e, rest)) => {
+                                app.undo.borrow_mut().push(UndoOp::Removed { playlist, entries: rest });
+                                app.undo_failed(e);
+                            }
+                        }
                     },
                 );
             }
         }
+    }
+
+    fn undo_failed(&self, e: ApiError) {
+        if e.is_signed_out() {
+            return self.session_expired();
+        }
+        self.notice(&format!("could not undo ({}) · press Ctrl+Z to try again", explain(&e)), true);
     }
 
     pub fn set_saved_many(&self, uris: Vec<String>, on: bool) {

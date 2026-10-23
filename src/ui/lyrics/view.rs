@@ -254,6 +254,8 @@ impl LyricsView {
 
     pub fn set_message(&self, message: &str) {
         self.st().message = message.to_owned();
+        // Screen readers hear "searching lyrics…" too, not silence.
+        self.update_property(&[gtk::accessible::Property::Label(&self.accessible_text())]);
         self.queue_draw();
     }
 
@@ -302,7 +304,7 @@ impl LyricsView {
         st.doc
             .as_ref()
             .map(|d| d.lines.iter().map(|l| l.original.as_str()).collect::<Vec<_>>().join("\n"))
-            .unwrap_or_default()
+            .unwrap_or_else(|| st.message.clone())
     }
 
     fn position(st: &State) -> u64 {

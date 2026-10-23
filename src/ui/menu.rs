@@ -239,14 +239,38 @@ impl Default for Menu {
 
 /// Right-click handler for `widget`: `build(x, y)` returns the menu or `None`.
 pub fn on_right_click(widget: &impl IsA<gtk::Widget>, build: impl Fn(f64, f64) -> Option<Menu> + 'static) {
+    let build = Rc::new(build);
     let g = gtk::GestureClick::new();
     g.set_button(3);
     let w = widget.as_ref().clone();
+    let b = build.clone();
     g.connect_pressed(move |g, _, x, y| {
-        if let Some(menu) = build(x, y) {
+        if let Some(menu) = b(x, y) {
             g.set_state(gtk::EventSequenceState::Claimed);
             menu.popup_at(&w, x, y);
         }
     });
     widget.add_controller(g);
+    // The same menu from the keyboard (Menu key or Shift+F10), at the focused row or card.
+    let keys = gtk::EventControllerKey::new();
+    let w = widget.as_ref().clone();
+    keys.connect_key_pressed(move |_, key, _, mods| {
+        let wanted = key == gdk::Key::Menu || (key == gdk::Key::F10 && mods.contains(gdk::ModifierType::SHIFT_MASK));
+        let focus = w.root().and_then(|r| r.focus()).filter(|f| f == &w || f.is_ancestor(&w));
+        let (true, Some(focus)) = (wanted, focus) else {
+            return gtk::glib::Propagation::Proceed;
+        };
+        let at = gtk::graphene::Point::new(12.0, focus.height() as f32 / 2.0);
+        let Some(p) = focus.compute_point(&w, &at) else {
+            return gtk::glib::Propagation::Proceed;
+        };
+        match build(p.x() as f64, p.y() as f64) {
+            Some(menu) => {
+                menu.popup_at(&w, p.x() as f64, p.y() as f64);
+                gtk::glib::Propagation::Stop
+            }
+            None => gtk::glib::Propagation::Proceed,
+        }
+    });
+    widget.add_controller(keys);
 }
