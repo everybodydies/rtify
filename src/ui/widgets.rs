@@ -81,6 +81,8 @@ pub fn name_symbol_button(b: &impl IsA<gtk::Accessible>, text: &str, tooltip: &s
     }
     if let Some(name) = accessible_name(tooltip) {
         b.update_property(&[gtk::accessible::Property::Label(&name)]);
+        // GtkButton points labelled-by at its label child, which wins over the label property.
+        b.reset_relation(gtk::AccessibleRelation::LabelledBy);
     }
 }
 
