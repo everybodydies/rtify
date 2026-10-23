@@ -191,8 +191,14 @@ impl Menu {
 }
 
 /// When a popover closes, GTK moves focus to its parent: the whole list, which then scrolls to its
-/// end. Hand focus to the clicked row instead (once; the popover is reused).
+/// end. Hand focus to the clicked row instead (once; the popover is reused), and keep the list
+/// where it was when the menu opened, also across the next frame's scroll-to-focus.
 fn refocus_on_close(popover: &gtk::Popover, row: gtk::Widget, switching: Rc<Cell<bool>>) {
+    let adjustment = row
+        .ancestor(gtk::ScrolledWindow::static_type())
+        .and_downcast::<gtk::ScrolledWindow>()
+        .map(|s| s.vadjustment());
+    let scrolled_to = adjustment.as_ref().map(|a| a.value());
     let handler: Rc<RefCell<Option<gtk::glib::SignalHandlerId>>> = Rc::default();
     let h = handler.clone();
     *handler.borrow_mut() = Some(popover.connect_closed(move |p| {
@@ -203,10 +209,24 @@ fn refocus_on_close(popover: &gtk::Popover, row: gtk::Widget, switching: Rc<Cell
             p.disconnect(id);
         }
         let row = row.clone();
+        let restore = adjustment.clone().zip(scrolled_to);
         gtk::glib::idle_add_local_once(move || {
-            if row.root().is_some() {
-                row.grab_focus();
+            if row.root().is_none() {
+                return;
             }
+            row.grab_focus();
+            let Some((adjustment, value)) = restore else { return };
+            adjustment.set_value(value);
+            let frames = Cell::new(2);
+            row.add_tick_callback(move |_, _| {
+                adjustment.set_value(value);
+                frames.set(frames.get() - 1);
+                if frames.get() > 0 {
+                    gtk::glib::ControlFlow::Continue
+                } else {
+                    gtk::glib::ControlFlow::Break
+                }
+            });
         });
     }));
 }
