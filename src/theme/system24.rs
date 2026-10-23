@@ -255,7 +255,7 @@ button.rt-primary {{ background: {accent_fill}; color: {on_accent}; border-color
 button.rt-primary:hover {{ background: {accent_fill_hover}; border-color: {accent_fill_hover}; }}
 button.rt-primary:active {{ background: {accent_fill_hover}; box-shadow: inset 0 0 0 2px {accent_text}; }}
 button.rt-primary label {{ color: {on_accent}; }}
-button.rt-chip {{ color: {text_dim}; padding: 1px 10px; min-height: 22px; }}
+button.rt-chip {{ color: {text_dim}; padding: 1px 6px; min-height: 22px; }}
 button.rt-chip:hover {{ color: {text}; }}
 button.rt-chip:checked {{ color: {accent_text}; border-color: {accent}; background: transparent; }}
 button:checked {{ color: {accent_text}; border-color: {accent}; background: transparent; }}

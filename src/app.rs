@@ -160,6 +160,9 @@ impl App {
         let session = SessionStore::load(&paths::session_file());
         let http = reqwest::Client::builder()
             .user_agent(concat!("rtify/", env!("CARGO_PKG_VERSION")))
+            // Upper bound for every request (lyrics, translation, artwork, sign-in); some set less.
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
             .build()
             .expect("http client");
         let theme = ThemeManager::new(&config.config.appearance);

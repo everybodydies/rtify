@@ -9,7 +9,7 @@ use crate::spotify::model::{Track, pick_image};
 
 #[derive(Clone)]
 pub struct NowPlayingPanel {
-    pub root: gtk::Overlay,
+    pub root: gtk::Widget,
     cover: gtk::Picture,
     title: gtk::Label,
     artist: gtk::Label,
@@ -25,7 +25,7 @@ impl NowPlayingPanel {
         cover.set_content_fit(gtk::ContentFit::Cover);
         cover.add_css_class("rt-cover");
         cover.set_can_shrink(true);
-        cover.set_size_request(300, 300);
+        cover.set_size_request(200, 200);
         let frame = gtk::AspectFrame::new(0.5, 0.0, 1.0, false);
         frame.set_child(Some(&cover));
 
@@ -53,8 +53,10 @@ impl NowPlayingPanel {
             .vexpand(true)
             .hscrollbar_policy(gtk::PolicyType::Never)
             .build();
-        let root = panel("now playing", &scroll).root;
-        root.set_size_request(340, -1);
+        // 340px wide when there is room, down to 240px on narrow windows.
+        let panel_root = panel("now playing", &scroll).root;
+        panel_root.set_size_request(240, -1);
+        let root: gtk::Widget = super::clamp::Clamp::new(&panel_root, 340).upcast();
         root.set_hexpand(false);
         Self {
             root,

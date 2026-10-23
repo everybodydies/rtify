@@ -8,6 +8,11 @@
 - Lyrics come only from LRCLIB; the bundled demo songs are a development feature (`demo`).
 - Context menus: the "add to playlist" submenu takes its own size, and closing a menu no longer
   scrolls the list to its end.
+- Narrow windows: rtify now fits 1024px (the player bar and track table shrink, and the
+  now-playing panel steps aside below 1180px). Searching inside a list renumbers the rows.
+- LRCLIB requests time out after 10 s (every HTTP request after 30 s), so a stalled server can no
+  longer leave the lyrics view searching forever.
+- Symbol buttons (◀, ❚❚, ♡, ⚙, +, ⋯ …) have spoken names for screen readers.
 
 ## [0.1.0] - 2026-10-22
 

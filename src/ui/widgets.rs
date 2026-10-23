@@ -60,6 +60,7 @@ pub fn button(text: &str, tooltip: &str) -> gtk::Button {
     if !tooltip.is_empty() {
         b.set_tooltip_text(Some(tooltip));
     }
+    name_symbol_button(&b, text, tooltip);
     b
 }
 
@@ -68,7 +69,25 @@ pub fn toggle(text: &str, tooltip: &str) -> gtk::ToggleButton {
     if !tooltip.is_empty() {
         b.set_tooltip_text(Some(tooltip));
     }
+    name_symbol_button(&b, text, tooltip);
     b
+}
+
+/// Buttons labelled with a symbol (◀, ❚❚, ♡, ⚙, +, ⋯) get a spoken name for screen readers:
+/// the tooltip without its shortcut hint.
+pub fn name_symbol_button(b: &impl IsA<gtk::Accessible>, text: &str, tooltip: &str) {
+    if text.chars().any(char::is_alphabetic) {
+        return;
+    }
+    if let Some(name) = accessible_name(tooltip) {
+        b.update_property(&[gtk::accessible::Property::Label(&name)]);
+    }
+}
+
+/// "Next (Ctrl+→)" → "Next".
+pub fn accessible_name(tooltip: &str) -> Option<String> {
+    let name = tooltip.split(" (").next().unwrap_or_default().trim();
+    (!name.is_empty()).then(|| name.to_owned())
 }
 
 pub fn hbox(spacing: i32) -> gtk::Box {
@@ -121,5 +140,11 @@ mod tests {
         assert_eq!(super::fmt_time(61_999), "1:01");
         assert_eq!(super::fmt_time(3_723_000), "1:02:03");
         assert_eq!(super::panel_title("now playing"), "now playing");
+        assert_eq!(super::accessible_name("Next (Ctrl+→)").as_deref(), Some("Next"));
+        assert_eq!(
+            super::accessible_name("Spotify Connect devices").as_deref(),
+            Some("Spotify Connect devices")
+        );
+        assert_eq!(super::accessible_name(""), None);
     }
 }

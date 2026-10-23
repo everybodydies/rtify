@@ -73,6 +73,7 @@ impl LyricsPage {
             .popover(&popover)
             .tooltip_text("Lyrics options")
             .build();
+        name_symbol_button(&more, "⋯", "Lyrics options");
 
         let bar = hbox(4);
         bar.add_css_class("rt-toolbar");

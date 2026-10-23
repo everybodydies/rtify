@@ -1,3 +1,4 @@
+pub mod clamp;
 pub mod collection;
 pub mod library;
 pub mod lyrics;

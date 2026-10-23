@@ -1,6 +1,8 @@
 //! LRCLIB (https://lrclib.net), the open lyrics database qtify uses: exact lookup by
 //! artist/title/album/duration, then a fuzzy search that prefers synced results.
 
+use std::time::Duration;
+
 use serde::Deserialize;
 
 use super::lrc;
@@ -12,6 +14,8 @@ pub fn base() -> String {
 }
 
 const CLIENT: &str = concat!("rtify/", env!("CARGO_PKG_VERSION"), " (https://github.com/everybodydies/rtify)");
+/// Per request; a stalled server must not leave the lyrics view "searching" forever.
+const TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -76,6 +80,7 @@ pub async fn fetch(http: &reqwest::Client, q: &TrackQuery) -> Result<Found, reqw
     let resp = http
         .get(format!("{}/api/get", base()))
         .header("Lrclib-Client", CLIENT)
+        .timeout(TIMEOUT)
         .query(&exact)
         .send()
         .await?;
@@ -89,6 +94,7 @@ pub async fn fetch(http: &reqwest::Client, q: &TrackQuery) -> Result<Found, reqw
     let resp = http
         .get(format!("{}/api/search", base()))
         .header("Lrclib-Client", CLIENT)
+        .timeout(TIMEOUT)
         .query(&fuzzy)
         .send()
         .await?;

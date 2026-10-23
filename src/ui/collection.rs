@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use gtk::{gdk, glib, prelude::*};
 
+use super::clamp::Clamp;
 use super::library::{Collection, LIKED_URI, SEARCH_URI, cover_widget};
 use super::menu::{Menu, on_right_click};
 use super::widgets::*;
@@ -183,11 +184,27 @@ pub struct CollectionView {
 }
 
 /// Column header with the same character width as the cells below it.
-fn header_button(text: &str, width_chars: i32, xalign: f32) -> gtk::Button {
+/// Natural width of the title column in pixels (it takes any extra room on wide windows).
+const TITLE_NATURAL: i32 = 320;
+/// Album column width in characters: narrowest, widest.
+const ALBUM_CHARS: (i32, i32) = (14, 26);
+
+/// Width of `n` average characters in the window font. Header and rows must agree exactly, so
+/// this never depends on a particular widget's (smaller or larger) text style.
+fn chars_px(n: i32) -> i32 {
+    let m = gtk::Label::new(None).pango_context().metrics(None, None);
+    n * m.approximate_char_width() / gtk::pango::SCALE
+}
+
+/// `width_chars..max_chars`: the column's width range (equal for fixed columns). Rows use the
+/// same range, so header and cells shrink alike on narrow windows.
+fn header_button(text: &str, width_chars: i32, max_chars: i32, xalign: f32) -> gtk::Button {
     let l = gtk::Label::new(Some(text));
     l.set_xalign(xalign);
     if width_chars > 0 {
         l.set_width_chars(width_chars);
+        l.set_max_width_chars(max_chars);
+        l.set_ellipsize(gtk::pango::EllipsizeMode::End);
     }
     let b = gtk::Button::new();
     b.set_child(Some(&l));
@@ -201,6 +218,7 @@ impl CollectionView {
         let title = label("", &["rt-hero"]);
         title.set_ellipsize(gtk::pango::EllipsizeMode::End);
         let subtitle = label("", &["rt-dim"]);
+        subtitle.set_ellipsize(gtk::pango::EllipsizeMode::End);
         let description = label("", &["rt-dim"]);
         description.set_ellipsize(gtk::pango::EllipsizeMode::End);
         let meta = vbox(4);
@@ -221,7 +239,8 @@ impl CollectionView {
         filter.add_css_class("rt-filter");
         filter.set_placeholder_text(Some("search in list"));
         filter.set_tooltip_text(Some("Search in this list (Ctrl+F)"));
-        filter.set_width_chars(26);
+        filter.set_width_chars(12);
+        filter.set_max_width_chars(26);
         let actions = hbox(10);
         actions.append(&play);
         actions.append(&shuffle);
@@ -241,20 +260,23 @@ impl CollectionView {
         // Sortable column headers; widths match the row cells below.
         let head = hbox(12);
         head.add_css_class("rt-table-head");
-        let num = header_button("#", 3, 1.0);
+        let num = header_button("#", 3, 3, 1.0);
+        num.update_property(&[gtk::accessible::Property::Label("sort by playlist order")]);
         let thumb_gap = hbox(0);
         thumb_gap.set_size_request(36, -1);
-        let t = header_button("title", 0, 0.0);
+        let t = header_button("title", 0, 0, 0.0);
         t.set_hexpand(true);
-        let album = header_button("album", 26, 0.0);
-        let added = header_button("added", 11, 0.0);
-        let time = header_button("time", 6, 1.0);
+        let t_col = Clamp::natural(&t, TITLE_NATURAL);
+        let album = header_button("album", ALBUM_CHARS.0, ALBUM_CHARS.1, 0.0);
+        let album_col = Clamp::natural(&album, chars_px(ALBUM_CHARS.1));
+        let added = header_button("added", 10, 10, 0.0);
+        let time = header_button("time", 6, 6, 1.0);
         let plus_gap = hbox(0);
         plus_gap.set_size_request(26, -1);
         head.append(&num);
         head.append(&thumb_gap);
-        head.append(&t);
-        head.append(&album);
+        head.append(&t_col);
+        head.append(&album_col);
         head.append(&added);
         head.append(&time);
         head.append(&plus_gap);
@@ -739,16 +761,17 @@ impl CollectionView {
         meta.set_valign(gtk::Align::Center);
         meta.append(&ellipsized(&t.name, &["rt-row-title"]));
         meta.append(&ellipsized(&t.artist_names(), &["rt-dim", "rt-small"]));
-        b.append(&meta);
+        // Same natural width as the header's title column, so every row shrinks alike.
+        b.append(&Clamp::natural(&meta, TITLE_NATURAL));
         let album = ellipsized(t.album_name(), &["rt-dim", "rt-small"]);
-        album.set_width_chars(26);
-        album.set_max_width_chars(26);
-        b.append(&album);
+        album.set_width_chars(ALBUM_CHARS.0);
+        album.set_max_width_chars(ALBUM_CHARS.1);
+        b.append(&Clamp::natural(&album, chars_px(ALBUM_CHARS.1)));
         let added = label(
             if show_added { short_date(&r.added_at) } else { "" },
             &["rt-faint", "rt-small", "rt-mono-num"],
         );
-        added.set_width_chars(11);
+        added.set_width_chars(10);
         b.append(&added);
         let time = label(&fmt_time(t.duration_ms), &["rt-faint", "rt-mono-num", "rt-small"]);
         time.set_width_chars(6);
@@ -761,10 +784,12 @@ impl CollectionView {
         plus.set_valign(gtk::Align::Center);
         // Same width as the header's spacer so the columns line up.
         plus.set_size_request(26, -1);
-        plus.set_tooltip_text(Some(&match self.app.last_playlist() {
+        let plus_tip = match self.app.last_playlist() {
             Some(p) => format!("Add to “{}”", p.name),
             None => "Add to playlist".to_owned(),
-        }));
+        };
+        plus.set_tooltip_text(Some(&plus_tip));
+        name_symbol_button(&plus, "+", &plus_tip);
         let (a, uri, v, rw) = (self.app.clone(), t.uri.clone(), self.clone(), row.clone());
         plus.connect_clicked(move |btn| match a.last_playlist() {
             Some(p) => a.add_to_playlist(&p, vec![uri.clone()]),

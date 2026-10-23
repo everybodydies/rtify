@@ -67,7 +67,7 @@ impl PlayerBar {
         left.append(&cover);
         left.append(&meta);
         left.append(&like);
-        left.set_size_request(320, -1);
+        left.set_size_request(240, -1);
 
         // Center: transport + progress.
         let shuffle = icon_toggle("⇄", "Shuffle (Ctrl+S)");
@@ -100,9 +100,8 @@ impl PlayerBar {
         bar.append(&progress);
         bar.append(&duration);
         let center = vbox(2);
-        // Fixed-width transport like the official client, however wide the window gets.
-        center.set_size_request(680, -1);
-        center.set_hexpand(false);
+        // Transport like the official client: 680px on wide windows, down to 300px on narrow ones.
+        center.set_size_request(300, -1);
         center.set_valign(gtk::Align::Center);
         center.append(&controls);
         center.append(&bar);
@@ -122,12 +121,14 @@ impl PlayerBar {
         let device_label = gtk::Label::new(Some("⌁"));
         device_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         device_label.set_max_width_chars(14);
+        device_label.set_width_chars(6);
         let devices_button = gtk::MenuButton::builder()
             .child(&device_label)
             .popover(&popover)
             .tooltip_text("Spotify Connect devices")
             .build();
         devices_button.add_css_class("rt-icon");
+        name_symbol_button(&devices_button, "", "Spotify Connect devices");
         let volume = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 5.0);
         volume.set_draw_value(false);
         volume.set_size_request(110, -1);
@@ -156,12 +157,12 @@ impl PlayerBar {
         right.append(&panel_toggle);
         right.append(&devices_button);
         right.append(&volume);
-        right.set_size_request(320, -1);
+        right.set_size_request(240, -1);
 
         let root = gtk::CenterBox::new();
         root.add_css_class("rt-playerbar");
         root.set_start_widget(Some(&left));
-        root.set_center_widget(Some(&center));
+        root.set_center_widget(Some(&super::clamp::Clamp::new(&center, 680)));
         root.set_end_widget(Some(&right));
 
         let this = Self {

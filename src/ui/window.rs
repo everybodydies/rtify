@@ -60,7 +60,7 @@ impl LoginPane {
         let body = vbox(10);
         body.set_valign(gtk::Align::Center);
         body.set_halign(gtk::Align::Center);
-        body.set_size_request(520, -1);
+        body.set_size_request(380, -1);
         let intro = label(
             "rtify controls Spotify Connect devices through the Web API (Premium required).\n\n\
              1. create an app at developer.spotify.com/dashboard\n\
@@ -75,6 +75,8 @@ impl LoginPane {
             &["rt-accent"],
         );
         redirect.set_selectable(true);
+        redirect.set_wrap(true);
+        redirect.set_wrap_mode(gtk::pango::WrapMode::Char);
         let client_id = gtk::Entry::new();
         client_id.set_placeholder_text(Some("client ID"));
         client_id.set_text(&app.config.borrow().config.spotify.client_id);
@@ -284,6 +286,11 @@ impl MainWindow {
         });
         let a = app.clone();
         this.window.connect_visible_notify(move |_| a.visibility_changed());
+        for prop in ["default-width", "maximized", "fullscreened"] {
+            let w = this.clone();
+            this.window.connect_notify_local(Some(prop), move |_, _| w.window_resized());
+        }
+        this.window_resized();
 
         // Plain keys that only make sense inside the window.
         let keys = gtk::EventControllerKey::new();
@@ -346,8 +353,23 @@ impl MainWindow {
         let page = if PAGES.contains(&page) { page } else { "library" };
         self.stack.set_visible_child_name(page);
         let panel = self.player.panel_toggle.is_active();
-        self.now_playing.root.set_visible(panel);
+        self.now_playing.root.set_visible(panel && self.now_playing_fits());
         self.player.set_toggles(page == "lyrics", panel);
+    }
+
+    /// Below this window width the now-playing panel steps aside (it comes back when the window
+    /// grows), so the track table keeps readable titles on half a 1920px screen.
+    const NOW_PLAYING_MIN_WINDOW: i32 = 1180;
+
+    fn now_playing_fits(&self) -> bool {
+        self.window.is_maximized() || self.window.is_fullscreen() || self.window.default_width() >= Self::NOW_PLAYING_MIN_WINDOW
+    }
+
+    /// Re-check the now-playing panel after the window was resized.
+    pub fn window_resized(&self) {
+        let panel = self.player.panel_toggle.is_active();
+        let visible = panel && self.page() != "login" && self.now_playing_fits();
+        self.now_playing.root.set_visible(visible);
     }
 
     pub fn page(&self) -> String {
@@ -355,7 +377,9 @@ impl MainWindow {
     }
 
     pub fn set_now_playing_panel(&self, visible: bool) {
-        self.now_playing.root.set_visible(visible && self.page() != "login");
+        self.now_playing
+            .root
+            .set_visible(visible && self.page() != "login" && self.now_playing_fits());
         self.player.set_toggles(self.page() == "lyrics", visible);
     }
 
