@@ -7,7 +7,7 @@ pub mod view;
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gtk::{gio, glib, prelude::*};
+use gtk::{glib, prelude::*};
 
 use super::widgets::*;
 use crate::app::App;
@@ -38,7 +38,7 @@ impl LyricsPage {
         let romanized = toggle("romaji", "Romanization (Japanese, Korean, Chinese, Cyrillic)");
         let translated = toggle("translate", "Translation under each line");
 
-        // Local clock controls only appear for files/demo songs (not while following Spotify).
+        // Local clock controls only appear for demo songs (not while following Spotify).
         let play = button("▶", "Play/pause");
         let restart = button("⟲", "From the start");
         let local_controls = hbox(2);
@@ -47,7 +47,6 @@ impl LyricsPage {
 
         // ⋯ menu.
         let follow = gtk::CheckButton::with_label("follow Spotify playback");
-        let open = button("open lyrics file…", "");
         let demo_btn = button("play a demo song", "");
         let minus = button("−", "Show lines later");
         let plus = button("+", "Show lines earlier");
@@ -60,12 +59,7 @@ impl LyricsPage {
         offset_row.append(&plus);
         let menu_box = vbox(6);
         menu_box.set_size_request(240, -1);
-        for w in [
-            follow.upcast_ref::<gtk::Widget>(),
-            offset_row.upcast_ref(),
-            open.upcast_ref(),
-            demo_btn.upcast_ref(),
-        ] {
+        for w in [follow.upcast_ref::<gtk::Widget>(), offset_row.upcast_ref(), demo_btn.upcast_ref()] {
             menu_box.append(w);
         }
         let popover = gtk::Popover::new();
@@ -120,28 +114,6 @@ impl LyricsPage {
             let i = page.demo_index.get();
             page.demo_index.set((i + 1) % demo::SONGS.len());
             a.open_demo_lyrics(i, true);
-        });
-        let (a, pop) = (app.clone(), popover.clone());
-        open.connect_clicked(move |b| {
-            pop.popdown();
-            let dialog = gtk::FileDialog::builder().title("Open lyrics").modal(true).build();
-            let filter = gtk::FileFilter::new();
-            filter.set_name(Some("Lyrics (.lrc, .ttml, .txt)"));
-            for p in ["*.lrc", "*.LRC", "*.ttml", "*.TTML", "*.txt"] {
-                filter.add_pattern(p);
-            }
-            let filters = gio::ListStore::new::<gtk::FileFilter>();
-            filters.append(&filter);
-            dialog.set_filters(Some(&filters));
-            let window = b.root().and_downcast::<gtk::Window>();
-            let a = a.clone();
-            dialog.open(window.as_ref(), gio::Cancellable::NONE, move |res| {
-                if let Ok(file) = res
-                    && let Some(path) = file.path()
-                {
-                    a.open_lyrics_file(&path);
-                }
-            });
         });
         for (b, delta) in [(&minus, -100i64), (&plus, 100)] {
             let a = app.clone();

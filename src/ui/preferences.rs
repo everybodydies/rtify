@@ -301,7 +301,7 @@ pub fn open(app: &App) {
         vec![
             row(
                 "follow Spotify playback",
-                "show and sync lyrics for the playing song: your files in ~/.config/rtify/lyrics first, then LRCLIB",
+                "show and sync lyrics for the playing song from LRCLIB",
                 &switch(app, c.lyrics.follow_playback, |a, c, on| {
                     c.lyrics.follow_playback = on;
                     let a = a.clone();

@@ -23,13 +23,12 @@ the desktop client) through the Web API. It does not play audio itself.
 | StatusNotifierItem tray (`ksni`; Noctalia, Waybar, KDE …) | done |
 | Global shortcuts via the XDG GlobalShortcuts portal + Hyprland fallback bindings | done |
 | Versioned config, per-account session state, atomic writes, broken-file backups | done |
-| Lyrics: LRC, enhanced LRC, TTML (incl. iTunes translations/transliterations) | done |
-| Lyrics animation: line highlight, word/syllable fill, blur/scale emphasis, gap dots, glow | done |
-| Romanization: kana → Hepburn, Hangul → Revised Romanization, Pinyin, Cyrillic | done |
-| Kanji readings (Lindera/IPADIC) | optional build feature `japanese-kanji` |
-| Translation via DeepL (opt-in, key in Secret Service) | done |
-| Live Spotify-synchronized lyrics | behind a capability gate, **off by default** (see below) |
-| MPRIS server, playlist editing, queue view | not yet |
+| Lyrics for the playing song from LRCLIB, synced to playback (like qtify) | done |
+| Lyrics animation: line highlight, word/syllable fill, blur/scale emphasis, gap dots | done |
+| Romanization offline: kana + kanji → Hepburn, Hangul → RR, Pinyin, Cyrillic | done |
+| Translation: Google (no key, like qtify) or DeepL (key in Secret Service), opt-in | done |
+| MPRIS (`playerctl`, media keys, Noctalia media widget, lock screens) | done |
+| Playlist editing with undo, context menus, multi-select, drag to playlists | done |
 
 ## Layout
 
@@ -127,7 +126,6 @@ rtify --toggle-window | --show | --hide | --toggle-lyrics | --play-pause | --nex
       --toggle-shuffle | --cycle-repeat | --volume-up | --volume-down | --focus-search
       --toggle-compact | --reload-theme | --preferences | --quit
 rtify --background            # start without a window (what autostart uses)
-rtify --lyrics-file song.lrc  # open a lyrics file with the local clock
 ```
 
 Starting rtify never starts audio by itself. It reconnects, shows the last-known track until
@@ -186,54 +184,42 @@ fixed palette and says so.
 
 ## Lyrics
 
-The renderer doesn't depend on Spotify or on any lyric provider. It draws the whole document
-with Pango in one custom widget:
+Lyrics work the way qtify does them: for the song Spotify is playing, rtify asks
+[LRCLIB](https://lrclib.net) (exact match on artist, title, album and duration, then a fuzzy
+search that prefers synced lyrics) and keeps them in sync with playback, running 250 ms ahead
+so lines light up as they are sung. Lookups happen only while the lyrics page is open and are
+cached per song. Settings → lyrics → *follow Spotify playback* turns this off.
+
+Note: Spotify's [Developer Compliance Tips](https://developer.spotify.com/compliance-tips) list
+synchronising its playback with lyrics as a prohibited use for apps built on its API. rtify is a
+personal client you run with your own developer app; whether you use the feature is your call.
+
+The renderer draws the whole document with Pango in one custom widget:
 
 - **static** text, **line** highlight with smooth scrolling, and **word/syllable fill** when the
-  source has word timing (enhanced LRC `<mm:ss.xx>`, TTML spans). Line-timed sources stay
-  line-highlighted; rtify never invents word timing.
-- emphasis scale, depth blur on distant lines, breathing dots in instrumental gaps, a slow accent
-  glow. *Reduced motion* turns all of that off and switches whole words on without sweeping.
+  lyrics carry word timing (enhanced LRC `<mm:ss.xx>`). Line-timed lyrics stay line-highlighted;
+  rtify never invents word timing.
+- emphasis scale, depth blur on distant lines, breathing dots in instrumental gaps. *Reduced
+  motion* turns all of that off and switches whole words on without sweeping.
 - clicking a line seeks; scrolling looks around and snaps back after 3 s; seeks and track changes
-  cut instead of scrolling through the song.
+  cut instead of scrolling through the song. Timing offset: `⋯` → timing −/+.
 - frame callbacks run only while the lyrics are visible.
-- romanization per script, not one generic transliteration. It is shown under the line, separately
-  from translation:
+- **romanization** (offline) per script, shown under the line:
 
   | Script | Method | Limitation |
   | --- | --- | --- |
-  | Japanese | kana → modified Hepburn; kanji via Lindera (feature) | without the feature, lines with kanji get no romanization |
+  | Japanese | morphological analysis (Lindera/IPADIC) → modified Hepburn, particles は/へ/を as wa/e/o | readings follow the dictionary; rare names can be off |
   | Korean | Revised Romanization with liaison, nasalisation, ㄹ-assimilation, aspiration | no tensification/palatalisation rules |
   | Chinese | Pinyin with tone marks | per character; polyphonic characters take the common reading |
   | Cyrillic | Russian/Ukrainian table | simplified, case-preserving |
 
-- **translation** (opt-in): DeepL with your own API key, stored in the Secret Service. Documents
-  that ship their own translation (TTML) keep it. You can show the translation under each line or
-  replace the lines with it.
+  Build with `--no-default-features` for a much smaller binary that romanizes kana only.
+- **translation** (opt-in, `translate` toggle): like qtify, one request to Google Translate per
+  song (no key), which also romanizes scripts rtify has no offline romanizer for. Or DeepL with
+  your own API key (Settings → lyrics). The lyrics text is sent to the provider you chose.
 
-### Where lyrics come from
-
-rtify ships only material it is allowed to show:
-
-- the three **demo songs** in `data/demo/`, written for this project (English word-timed TTML
-  with a German translation, Japanese enhanced LRC, Korean LRC)
-- **files you open** (`open…`, or `rtify --lyrics-file`)
-- with the gate below enabled, **files you put in `~/.config/rtify/lyrics/`**, matched by
-  Spotify track id, `Artist - Title` or `Title` (`.ttml` > `.lrc` > `.txt`)
-
-Everything else plays against rtify's own **local clock** (▶ / ⟲ in the lyrics toolbar).
-
-### The Spotify sync capability gate
-
-Settings → lyrics → *follow Spotify playback* is **off by default**. Spotify's
-[Developer Compliance Tips](https://developer.spotify.com/compliance-tips) list synchronising
-recordings with lyrics as a prohibited use. Having lyric text, or access to a lyrics API, settles
-neither whether you may display it nor whether you may sync it. Turning the gate on is your
-decision. Even then rtify only uses files you supplied, and it drives them from timestamped
-playback snapshots plus monotonic time, re-anchoring on every poll, seek, pause and device change.
-No third-party lyric API is built in. The provider interface (`lyrics::provider::LyricsProvider`)
-is where a licensed source would plug in, with its attribution and cache-lifetime rules
-(`LyricDocument::expires_at`).
+The `⋯` menu also plays three bundled **demo songs** (original text written for this project)
+against a local clock, to try the renderer without Spotify.
 
 ## Files
 
@@ -242,7 +228,6 @@ is where a licensed source would plug in, with its attribution and cache-lifetim
 | `~/.config/rtify/config.toml` | preferences (versioned, migrated, written atomically, debounced) |
 | `~/.local/state/rtify/session.json` | last track/context/selection/page, shuffle/repeat, device, per account |
 | `~/.config/rtify/noctalia.css` | written by the Noctalia template |
-| `~/.config/rtify/lyrics/` | your lyric files (gate enabled) |
 | `~/.config/autostart/rtify.desktop` | written when *launch at login* is on |
 | Secret Service | Spotify refresh token, DeepL key |
 
@@ -264,8 +249,8 @@ src/
 ├── config.rs  paths.rs
 ├── persistence/           atomic writes, config store + migrations, session store
 ├── theme/                 contrast math, System24 CSS, Noctalia, album palette, manager
-├── lyrics/                model, LRC, TTML, romanization/, translation, synchronization, provider
-├── desktop/               tray (ksni), shortcuts (portal), lifecycle (autostart)
+├── lyrics/                model, LRC, TTML, LRCLIB, Google/DeepL translation, romanization/, synchronization
+├── desktop/               tray (ksni), shortcuts (portal), MPRIS, lifecycle (autostart)
 ├── services/              playback state + reconnect plan, adaptive polling, artwork cache
 ├── spotify/               PKCE auth, Web API client, models, Secret Service tokens
 └── ui/                    window, player, library, preferences, lyrics/{view,layout,animations}

@@ -186,8 +186,7 @@ pub struct Lyrics {
     pub animation: LyricAnimation,
     pub font_scale: f64,
     pub offset_ms: i64,
-    /// Show and sync lyrics for whatever Spotify is playing (LRCLIB, or your own files in
-    /// ~/.config/rtify/lyrics, which take precedence).
+    /// Show and sync lyrics (from LRCLIB) for whatever Spotify is playing.
     pub follow_playback: bool,
     /// "google" (no key, like qtify) or "deepl" (API key in the Secret Service).
     pub translation_provider: String,

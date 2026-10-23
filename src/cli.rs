@@ -48,9 +48,6 @@ pub struct Cli {
     pub preferences: bool,
     #[arg(long)]
     pub quit: bool,
-    /// Open a .lrc/.ttml file in the lyrics view (local clock, no Spotify sync).
-    #[arg(long, value_name = "FILE")]
-    pub lyrics_file: Option<std::path::PathBuf>,
     /// Print Hyprland key bindings for the configured shortcuts and exit (`lua` or `conf`).
     #[arg(long, value_name = "SYNTAX")]
     pub print_hyprland_binds: Option<String>,

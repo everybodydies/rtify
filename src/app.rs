@@ -3,7 +3,6 @@
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::ops::Deref;
-use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,7 +15,7 @@ use crate::config::{Config, Notifications};
 use crate::desktop::mpris::{self, MprisEvent, MprisHandle, MprisState};
 use crate::desktop::shortcuts::{self, ShortcutEvent};
 use crate::desktop::tray::{self, TrayHandle, TrayState};
-use crate::lyrics::provider::{self, LocalFileProvider, LyricsProvider, TrackQuery, demo};
+use crate::lyrics::provider::{TrackQuery, demo};
 use crate::lyrics::synchronization::LyricClock;
 use crate::lyrics::{LyricDocument, google, lrclib, romanization, translation};
 use crate::paths::{self, APP_ID};
@@ -49,8 +48,7 @@ const LYRIC_LEAD_MS: u64 = 250;
 enum LyricsSource {
     None,
     Demo(usize),
-    File(std::path::PathBuf),
-    /// A user-supplied file matching the current Spotify track (capability gate enabled).
+    /// Lyrics for the playing Spotify track (LRCLIB), keyed by track.
     Track(String),
 }
 
@@ -291,19 +289,10 @@ impl App {
             self.quit();
             return glib::ExitCode::SUCCESS;
         }
-        if let Some(file) = &cli.lyrics_file {
-            let path = if file.is_absolute() {
-                file.clone()
-            } else {
-                cmd.cwd().map(|c| c.join(file)).unwrap_or_else(|| file.clone())
-            };
-            self.open_lyrics_file(&path);
-            self.win().show_page("lyrics");
-        }
         for c in &commands {
             self.command(*c);
         }
-        let wants_window = commands.iter().any(|c| !c.is_background()) || cli.lyrics_file.is_some();
+        let wants_window = commands.iter().any(|c| !c.is_background());
         let start_hidden = cli.background || self.config.borrow().config.window.start_hidden;
         if (first && !start_hidden && commands.iter().all(|c| !c.is_background()))
             || (!first && commands.is_empty() && !cli.background)
@@ -1943,18 +1932,6 @@ impl App {
         self.show_lyrics(doc, LyricsSource::Demo(index), &label, Clock::Local(clock));
     }
 
-    pub fn open_lyrics_file(&self, path: &Path) {
-        match provider::load_file(path) {
-            Ok(doc) => {
-                let mut clock = LyricClock::new(Some(doc.duration_ms() + 1500));
-                clock.set_playing(true);
-                let label = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                self.show_lyrics(Some(doc), LyricsSource::File(path.to_owned()), &label, Clock::Local(clock));
-            }
-            Err(e) => self.notice(&e.to_string(), true),
-        }
-    }
-
     fn track_query(track: &Track) -> TrackQuery {
         TrackQuery {
             id: track.id.clone().unwrap_or_default(),
@@ -1965,8 +1942,8 @@ impl App {
         }
     }
 
-    /// Like qtify: lyrics for the playing track, synced to playback. Your own files in
-    /// ~/.config/rtify/lyrics win; otherwise LRCLIB. Only fetched while the lyrics page is open.
+    /// Like qtify: lyrics for the playing track from LRCLIB, synced to playback. Only fetched
+    /// while the lyrics page is open.
     pub fn load_track_lyrics(&self) {
         if !self.config.borrow().config.lyrics.follow_playback || self.win().page() != "lyrics" {
             return;
@@ -1992,40 +1969,20 @@ impl App {
         self.win().lyrics.view.set_message("searching lyrics…");
         let http = self.http.clone();
         let app = self.clone();
-        glib::spawn_future_local(async move {
-            let q = query.clone();
-            let local = gio::spawn_blocking(move || {
-                LocalFileProvider {
-                    dirs: vec![paths::lyrics_dir()],
+        spawn_then(async move { lrclib::fetch(&http, &query).await }, move |r| match r {
+            Ok(found) => {
+                app.lyric_results.borrow_mut().insert(key.clone(), found.clone());
+                if *app.lyrics_source.borrow() == LyricsSource::Track(key.clone()) {
+                    app.show_found(found, &key, &track);
                 }
-                .lookup(&q)
-            })
-            .await;
-            let found = match local {
-                Ok(Ok(Some(doc))) => lrclib::Found::Lyrics(Box::new(doc)),
-                _ => {
-                    let (tx, rx) = async_channel::bounded(1);
-                    rt().spawn(async move {
-                        let _ = tx.send(lrclib::fetch(&http, &query).await).await;
-                    });
-                    match rx.recv().await {
-                        Ok(Ok(f)) => f,
-                        Ok(Err(e)) => {
-                            log::info!("lrclib: {e}");
-                            // Network errors are not cached, so reopening the page retries.
-                            if *app.lyrics_source.borrow() == LyricsSource::Track(key.clone()) {
-                                app.win().lyrics.view.set_message("lyrics service unreachable");
-                                *app.lyrics_source.borrow_mut() = LyricsSource::None;
-                            }
-                            return;
-                        }
-                        Err(_) => return,
-                    }
+            }
+            Err(e) => {
+                log::info!("lrclib: {e}");
+                // Network errors are not cached, so reopening the page retries.
+                if *app.lyrics_source.borrow() == LyricsSource::Track(key.clone()) {
+                    app.win().lyrics.view.set_message("lyrics service unreachable");
+                    *app.lyrics_source.borrow_mut() = LyricsSource::None;
                 }
-            };
-            app.lyric_results.borrow_mut().insert(key.clone(), found.clone());
-            if *app.lyrics_source.borrow() == LyricsSource::Track(key.clone()) {
-                app.show_found(found, &key, &track);
             }
         });
     }

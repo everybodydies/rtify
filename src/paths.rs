@@ -50,11 +50,6 @@ pub fn noctalia_css() -> PathBuf {
     config_dir().join("noctalia.css")
 }
 
-/// Drop-in `.lrc` / `.ttml` files the local lyrics provider searches.
-pub fn lyrics_dir() -> PathBuf {
-    config_dir().join("lyrics")
-}
-
 pub fn autostart_file() -> PathBuf {
     config_home().join("autostart").join(format!("{APP_DIR}.desktop"))
 }
