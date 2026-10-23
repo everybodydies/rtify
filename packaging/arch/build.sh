@@ -28,6 +28,7 @@ pkg=$(ls "$out"/rtify-"$ver"-*.pkg.tar.zst | head -1)
 pacman -U --noconfirm "$pkg" >/dev/null
 rtify --version
 test -f /usr/share/applications/io.github.everybodydies.rtify.desktop
+test -f /usr/share/metainfo/io.github.everybodydies.rtify.metainfo.xml
 export RTIFY_DEMO=1 RTIFY_API_BASE=http://127.0.0.1:8799/v1 RTIFY_CONFIG_DIR=$work/cfg RTIFY_STATE_DIR=$work/state
 python3 "$src/dev/demo-server.py" --port 8799 >/dev/null 2>&1 &
 Xvfb :99 >/dev/null 2>&1 &
