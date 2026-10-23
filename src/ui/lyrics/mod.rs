@@ -1,4 +1,4 @@
-//! The lyrics page: toolbar, renderer and attribution line.
+//! The lyrics page: the renderer, two toggles and a `⋯` menu for everything rarely needed.
 
 pub mod animations;
 pub mod layout;
@@ -19,12 +19,15 @@ use view::{Clock, LyricsView, ViewOptions};
 pub struct LyricsPage {
     pub root: gtk::Overlay,
     pub view: LyricsView,
-    source: gtk::Label,
-    sync: gtk::Label,
-    attribution: gtk::Label,
+    panel: Panel,
+    footer: gtk::Label,
+    status: gtk::Label,
+    local_controls: gtk::Box,
     play: gtk::Button,
     romanized: gtk::ToggleButton,
     translated: gtk::ToggleButton,
+    follow: gtk::CheckButton,
+    offset: gtk::Label,
     demo_index: Rc<Cell<usize>>,
     updating: Rc<Cell<bool>>,
 }
@@ -32,58 +35,95 @@ pub struct LyricsPage {
 impl LyricsPage {
     pub fn new(app: &App) -> Self {
         let view = LyricsView::default();
-        let source = ellipsized("no lyrics loaded", &["rt-dim"]);
-        source.set_hexpand(true);
-        let sync = label("", &["rt-faint"]);
-        let demo_btn = button("demo", "Cycle through the bundled demo songs");
-        let open = button("open…", "Open a .lrc or .ttml file");
-        let play = button("▶", "Play/pause the local lyric clock");
-        let restart = button("⟲", "Restart from the beginning");
-        let romanized = toggle("roma", "Show romanization");
-        let translated = toggle("trans", "Show translation");
+        let romanized = toggle("romaji", "Romanization (Japanese, Korean, Chinese, Cyrillic)");
+        let translated = toggle("translate", "Translation under each line");
 
-        let bar = hbox(6);
-        bar.add_css_class("rt-toolbar");
+        // Local clock controls only appear for files/demo songs (not while following Spotify).
+        let play = button("▶", "Play/pause");
+        let restart = button("⟲", "From the start");
+        let local_controls = hbox(2);
+        local_controls.append(&play);
+        local_controls.append(&restart);
+
+        // ⋯ menu.
+        let follow = gtk::CheckButton::with_label("follow Spotify playback");
+        let open = button("open lyrics file…", "");
+        let demo_btn = button("play a demo song", "");
+        let minus = button("−", "Show lines later");
+        let plus = button("+", "Show lines earlier");
+        let offset = label("", &["rt-mono-num"]);
+        let offset_row = hbox(6);
+        offset_row.append(&label("timing", &["rt-dim"]));
+        offset_row.append(&spacer());
+        offset_row.append(&minus);
+        offset_row.append(&offset);
+        offset_row.append(&plus);
+        let menu_box = vbox(6);
+        menu_box.set_size_request(240, -1);
         for w in [
-            source.upcast_ref::<gtk::Widget>(),
-            sync.upcast_ref(),
-            demo_btn.upcast_ref(),
+            follow.upcast_ref::<gtk::Widget>(),
+            offset_row.upcast_ref(),
             open.upcast_ref(),
-            play.upcast_ref(),
-            restart.upcast_ref(),
-            romanized.upcast_ref(),
-            translated.upcast_ref(),
+            demo_btn.upcast_ref(),
         ] {
-            bar.append(w);
+            menu_box.append(w);
         }
-        let attribution = ellipsized("", &["rt-faint"]);
-        let body = vbox(6);
+        let popover = gtk::Popover::new();
+        popover.set_child(Some(&menu_box));
+        let more = gtk::MenuButton::builder()
+            .child(&gtk::Label::new(Some("⋯")))
+            .popover(&popover)
+            .tooltip_text("Lyrics options")
+            .build();
+
+        let bar = hbox(4);
+        bar.add_css_class("rt-toolbar");
+        bar.set_halign(gtk::Align::End);
+        bar.append(&local_controls);
+        bar.append(&romanized);
+        bar.append(&translated);
+        bar.append(&more);
+
+        let footer = ellipsized("", &["rt-faint", "rt-small"]);
+        let status = ellipsized("", &["rt-faint", "rt-small"]);
+        status.set_halign(gtk::Align::End);
+        let foot = hbox(8);
+        footer.set_hexpand(true);
+        foot.append(&footer);
+        foot.append(&status);
+
+        let body = vbox(4);
         body.append(&bar);
         body.append(&view);
-        body.append(&attribution);
-        let root = panel("lyrics", &body).root;
+        body.append(&foot);
+        let panel = panel("lyrics", &body);
 
         let this = Self {
-            root,
+            root: panel.root.clone(),
             view: view.clone(),
-            source,
-            sync,
-            attribution,
+            panel,
+            footer,
+            status,
+            local_controls,
             play: play.clone(),
             romanized: romanized.clone(),
             translated: translated.clone(),
+            follow: follow.clone(),
+            offset,
             demo_index: Rc::new(Cell::new(0)),
             updating: Rc::new(Cell::new(false)),
         };
 
-        let (page, a) = (this.clone(), app.clone());
+        let (page, a, pop) = (this.clone(), app.clone(), popover.clone());
         demo_btn.connect_clicked(move |_| {
+            pop.popdown();
             let i = page.demo_index.get();
             page.demo_index.set((i + 1) % demo::SONGS.len());
             a.open_demo_lyrics(i, true);
         });
-        let a = app.clone();
+        let (a, pop) = (app.clone(), popover.clone());
         open.connect_clicked(move |b| {
+            pop.popdown();
             let dialog = gtk::FileDialog::builder().title("Open lyrics").modal(true).build();
             let filter = gtk::FileFilter::new();
             filter.set_name(Some("Lyrics (.lrc, .ttml, .txt)"));
@@ -103,6 +143,22 @@ impl LyricsPage {
                 }
             });
         });
+        for (b, delta) in [(&minus, -100i64), (&plus, 100)] {
+            let a = app.clone();
+            b.connect_clicked(move |_| {
+                a.update_config(|c| c.lyrics.offset_ms = (c.lyrics.offset_ms + delta).clamp(-5000, 5000));
+                a.apply_lyrics_options();
+            });
+        }
+        let (page, a) = (this.clone(), app.clone());
+        follow.connect_toggled(move |b| {
+            if page.updating.get() {
+                return;
+            }
+            let on = b.is_active();
+            a.update_config(|c| c.lyrics.follow_playback = on);
+            a.lyrics_follow_changed();
+        });
         let page = this.clone();
         play.connect_clicked(move |_| {
             page.view.with_local_clock(|c| {
@@ -115,9 +171,7 @@ impl LyricsPage {
             page.refresh_play_button();
         });
         let page = this.clone();
-        restart.connect_clicked(move |_| {
-            page.view.with_local_clock(|c| c.seek(0));
-        });
+        restart.connect_clicked(move |_| page.view.with_local_clock(|c| c.seek(0)));
         let (page, a) = (this.clone(), app.clone());
         romanized.connect_toggled(move |b| {
             if page.updating.get() {
@@ -138,7 +192,7 @@ impl LyricsPage {
             a.translate_current_lyrics();
         });
 
-        // Keep the play button label honest while the clock runs out.
+        // Keep the play button honest while a local clock runs out.
         let page = this.clone();
         glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
             if page.root.is_mapped() {
@@ -152,53 +206,50 @@ impl LyricsPage {
     pub fn refresh_play_button(&self) {
         match self.view.clock() {
             Clock::Local(c) => {
-                self.play.set_sensitive(true);
+                self.local_controls.set_visible(self.view.document().is_some());
                 self.play.set_label(if c.playing() && !c.finished() { "❚❚" } else { "▶" });
             }
-            Clock::External(_) => {
-                self.play.set_sensitive(false);
-                self.play.set_label("▶");
-            }
+            Clock::External(_) => self.local_controls.set_visible(false),
         }
     }
 
-    pub fn set_options(&self, opts: ViewOptions) {
+    pub fn set_options(&self, opts: ViewOptions, follow: bool) {
         self.updating.set(true);
         self.romanized.set_active(opts.romanized);
         self.translated.set_active(opts.translation);
+        self.follow.set_active(follow);
+        self.offset.set_text(&format!("{:+.1}s", opts.offset_ms as f64 / 1000.0));
         self.updating.set(false);
         self.view.set_options(opts);
     }
 
-    pub fn show_document(&self, doc: Option<&LyricDocument>, source: &str, clock: Clock) {
+    pub fn show_document(&self, doc: Option<&LyricDocument>, title: &str, clock: Clock) {
         self.view.set_document(doc.cloned());
         self.view.set_clock(clock);
-        self.source.set_text(source);
+        self.panel.set_title(if title.is_empty() { "lyrics" } else { title });
+        self.status.set_text("");
         self.set_attribution(doc);
         self.refresh_play_button();
     }
 
     pub fn set_attribution(&self, doc: Option<&LyricDocument>) {
         let Some(doc) = doc else {
-            self.attribution.set_text("");
+            self.footer.set_text("");
             return;
         };
         let a = &doc.attribution;
-        let mut parts = vec![format!("lyrics: {}", a.source)];
-        if !a.rights.is_empty() {
-            parts.push(a.rights.clone());
-        }
+        let mut parts = vec![a.source.clone()];
         if !a.songwriters.is_empty() {
             parts.push(format!("written by {}", a.songwriters.join(", ")));
         }
         if let Some(t) = &doc.translation {
             parts.push(format!("translation: {} ({})", t.provenance, t.language));
         }
-        self.attribution.set_text(&parts.join(" · "));
-        self.attribution.set_tooltip_text(Some(&a.source_id));
+        self.footer.set_text(&parts.join(" · "));
+        self.footer.set_tooltip_text(Some(&a.source_id));
     }
 
-    pub fn set_sync_status(&self, text: &str) {
-        self.sync.set_text(text);
+    pub fn set_status(&self, text: &str) {
+        self.status.set_text(text);
     }
 }

@@ -36,6 +36,11 @@ impl ApiError {
         matches!(self, ApiError::Status(404, m) if m.to_lowercase().contains("device"))
     }
 
+    /// Logged in before rtify asked for this permission (e.g. playlist editing).
+    pub fn is_scope(&self) -> bool {
+        matches!(self, ApiError::Status(401 | 403, m) if m.to_lowercase().contains("scope"))
+    }
+
     pub fn needs_premium(&self) -> bool {
         matches!(self, ApiError::Status(403, m) if m.to_lowercase().contains("premium"))
     }
@@ -327,10 +332,61 @@ impl SpotifyClient {
         self.get(&format!("/albums/{album_id}"), &[]).await
     }
 
+    pub async fn followed_artists(&self, after: Option<&str>) -> Result<CursorPage<Artist>, ApiError> {
+        let mut q = vec![("type", "artist".to_owned()), ("limit", "50".to_owned())];
+        if let Some(a) = after {
+            q.push(("after", a.to_owned()));
+        }
+        Ok(self.get_required::<FollowedArtists>("/me/following", &q).await?.artists)
+    }
+
+    pub async fn artist_albums(&self, artist_id: &str) -> Result<Page<Album>, ApiError> {
+        let q = vec![("include_groups", "album,single".to_owned()), ("limit", "50".to_owned())];
+        self.get_required(&format!("/artists/{artist_id}/albums"), &q).await
+    }
+
+    /// Songs by an artist (search, since top-tracks needs a market and is limited to 10).
+    pub async fn artist_tracks(&self, name: &str) -> Result<Vec<Track>, ApiError> {
+        let q = vec![
+            ("q", format!("artist:\"{name}\"")),
+            ("type", "track".into()),
+            ("limit", "50".into()),
+        ];
+        let r: SearchResult = self.get_required("/search", &q).await?;
+        Ok(r.tracks.map(|t| t.items).unwrap_or_default())
+    }
+
+    /// Add `uris` at `position` (end when `None`).
+    pub async fn add_to_playlist(&self, playlist_id: &str, uris: &[String], position: Option<u32>) -> Result<(), ApiError> {
+        let mut body = serde_json::json!({ "uris": uris });
+        if let Some(p) = position {
+            body["position"] = p.into();
+        }
+        self.command(Method::POST, &format!("/playlists/{playlist_id}/items"), &[], Some(body))
+            .await
+    }
+
+    /// Remove every occurrence of `uris`.
+    pub async fn remove_from_playlist(&self, playlist_id: &str, uris: &[String]) -> Result<(), ApiError> {
+        let items: Vec<serde_json::Value> = uris.iter().map(|u| serde_json::json!({ "uri": u })).collect();
+        self.command(
+            Method::DELETE,
+            &format!("/playlists/{playlist_id}/items"),
+            &[],
+            Some(serde_json::json!({ "items": items })),
+        )
+        .await
+    }
+
+    pub async fn add_to_queue(&self, uri: &str) -> Result<(), ApiError> {
+        self.command(Method::POST, "/me/player/queue", &[("uri", uri.to_owned())], None)
+            .await
+    }
+
     pub async fn search(&self, query: &str) -> Result<SearchResult, ApiError> {
         let q = vec![
             ("q", query.to_owned()),
-            ("type", "track,playlist,album".into()),
+            ("type", "track,playlist,album,artist".into()),
             ("limit", "20".into()),
         ];
         self.get_required("/search", &q).await
@@ -342,14 +398,39 @@ impl SpotifyClient {
     }
 
     pub async fn set_saved(&self, uri: &str, saved: bool) -> Result<(), ApiError> {
-        let method = if saved { Method::PUT } else { Method::DELETE };
-        self.command(method, "/me/library", &[("uris", uri.to_owned())], None).await
+        self.set_saved_many(&[uri.to_owned()], saved).await
+    }
+
+    /// Save/remove up to 40 items per request (tracks, albums, playlists, artists).
+    pub async fn set_saved_many(&self, uris: &[String], saved: bool) -> Result<(), ApiError> {
+        for chunk in uris.chunks(40) {
+            let method = if saved { Method::PUT } else { Method::DELETE };
+            self.command(method, "/me/library", &[("uris", chunk.join(","))], None).await?;
+        }
+        Ok(())
     }
 }
 
 /// Base62 id from `spotify:kind:id`.
 pub fn uri_id(uri: &str) -> &str {
     uri.rsplit(':').next().unwrap_or(uri)
+}
+
+/// `spotify:track:x` or `https://open.spotify.com/(intl-xx/)track/x?si=…` → `spotify:track:x`.
+pub fn normalize_uri(s: &str) -> Option<String> {
+    let s = s.trim();
+    if let Some(rest) = s.strip_prefix("spotify:") {
+        return (rest.split(':').count() >= 2).then(|| s.to_owned());
+    }
+    let url = url::Url::parse(s).ok()?;
+    if url.host_str()? != "open.spotify.com" {
+        return None;
+    }
+    let parts: Vec<&str> = url.path_segments()?.filter(|p| !p.is_empty() && !p.starts_with("intl-")).collect();
+    match parts.as_slice() {
+        [kind, id, ..] => Some(format!("spotify:{kind}:{id}")),
+        _ => None,
+    }
 }
 
 pub fn uri_kind(uri: &str) -> &str {
@@ -359,6 +440,21 @@ pub fn uri_kind(uri: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalizes_links() {
+        assert_eq!(normalize_uri("spotify:track:abc").as_deref(), Some("spotify:track:abc"));
+        assert_eq!(
+            normalize_uri("https://open.spotify.com/intl-de/track/abc?si=x").as_deref(),
+            Some("spotify:track:abc")
+        );
+        assert_eq!(
+            normalize_uri("https://open.spotify.com/playlist/p1").as_deref(),
+            Some("spotify:playlist:p1")
+        );
+        assert_eq!(normalize_uri("https://example.com/track/abc"), None);
+        assert_eq!(normalize_uri("spotify:"), None);
+    }
 
     #[test]
     fn uri_parts() {

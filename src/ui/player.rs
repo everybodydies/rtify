@@ -30,10 +30,13 @@ pub struct PlayerBar {
     pub panel_toggle: gtk::ToggleButton,
     devices: gtk::ListBox,
     devices_button: gtk::MenuButton,
+    device_label: gtk::Label,
     /// Set while widgets are updated from state so their signals don't echo commands back.
     updating: Rc<Cell<bool>>,
     /// The user is dragging the progress bar; don't move it under their pointer.
     seeking: Rc<Cell<bool>>,
+    /// Last volume change by the user; polls don't overwrite it for a moment.
+    volume_touched: Rc<Cell<Option<std::time::Instant>>>,
 }
 
 fn icon(text: &str, tooltip: &str) -> gtk::Button {
@@ -115,8 +118,12 @@ impl PlayerBar {
         dev_box.append(&devices);
         let popover = gtk::Popover::new();
         popover.set_child(Some(&dev_box));
+        // A child (not `label`) keeps GTK from adding a dropdown arrow.
+        let device_label = gtk::Label::new(Some("⌁"));
+        device_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        device_label.set_max_width_chars(14);
         let devices_button = gtk::MenuButton::builder()
-            .label("⌁ device")
+            .child(&device_label)
             .popover(&popover)
             .tooltip_text("Spotify Connect devices")
             .build();
@@ -124,14 +131,30 @@ impl PlayerBar {
         let volume = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 5.0);
         volume.set_draw_value(false);
         volume.set_size_request(110, -1);
-        volume.set_tooltip_text(Some("Volume (Ctrl+↑/↓)"));
+        volume.set_tooltip_text(Some("Volume (Ctrl+↑/↓, scroll)"));
+        // Wheel over the volume bar: exactly 5 % per notch (GtkRange's own scroll step is far
+        // larger on many mice and touchpads).
+        let wheel = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL | gtk::EventControllerScrollFlags::DISCRETE);
+        wheel.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let v = volume.clone();
+        wheel.connect_scroll(move |_, _, dy| {
+            let step = if dy < 0.0 {
+                5.0
+            } else if dy > 0.0 {
+                -5.0
+            } else {
+                0.0
+            };
+            v.set_value((v.value() + step).clamp(0.0, 100.0));
+            glib::Propagation::Stop
+        });
+        volume.add_controller(wheel);
         let right = hbox(6);
         right.set_halign(gtk::Align::End);
         right.set_valign(gtk::Align::Center);
         right.append(&lyrics);
         right.append(&panel_toggle);
         right.append(&devices_button);
-        right.append(&label("vol", &["rt-faint", "rt-small"]));
         right.append(&volume);
         right.set_size_request(320, -1);
 
@@ -158,8 +181,10 @@ impl PlayerBar {
             panel_toggle: panel_toggle.clone(),
             devices: devices.clone(),
             devices_button,
+            device_label,
             updating: Rc::new(Cell::new(false)),
             seeking: Rc::new(Cell::new(false)),
+            volume_touched: Rc::default(),
         };
 
         let a = app.clone();
@@ -224,12 +249,44 @@ impl PlayerBar {
             glib::Propagation::Proceed
         });
 
-        let (a, upd) = (app.clone(), this.updating.clone());
+        // Hover preview: the time under the pointer, shown above the bar.
+        let preview_label = label("", &["rt-mono-num", "rt-small"]);
+        let preview = gtk::Popover::builder()
+            .child(&preview_label)
+            .has_arrow(false)
+            .autohide(false)
+            .can_focus(false)
+            .position(gtk::PositionType::Top)
+            .build();
+        preview.add_css_class("rt-tip");
+        preview.set_parent(&progress);
+        let motion = gtk::EventControllerMotion::new();
+        let (p, pv, pl) = (progress.clone(), preview.clone(), preview_label.clone());
+        motion.connect_motion(move |_, x, _| {
+            let (lo, hi) = (p.adjustment().lower(), p.adjustment().upper());
+            // The trough is inset by the slider margins; match GTK's mapping closely enough.
+            let w = (p.width() as f64 - 10.0).max(1.0);
+            let frac = ((x - 5.0) / w).clamp(0.0, 1.0);
+            if hi - lo <= 1.0 {
+                return;
+            }
+            pl.set_text(&fmt_time((lo + frac * (hi - lo)) as u64));
+            pv.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, 0, 1, 1)));
+            if !pv.is_visible() {
+                pv.popup();
+            }
+        });
+        let pv = preview.clone();
+        motion.connect_leave(move |_| pv.popdown());
+        progress.add_controller(motion);
+
+        let (a, upd, touched) = (app.clone(), this.updating.clone(), this.volume_touched.clone());
         let pending: Rc<Cell<Option<glib::SourceId>>> = Rc::default();
         volume.connect_value_changed(move |s| {
             if upd.get() {
                 return;
             }
+            touched.set(Some(std::time::Instant::now()));
             // Debounce: the API is slow, scrolling produces many values.
             if let Some(id) = pending.take() {
                 id.remove();
@@ -272,15 +329,25 @@ impl PlayerBar {
             self.like.set_label(if s { "♥" } else { "♡" });
         }
         self.like.set_sensitive(pb.track.is_some() && !pb.stale);
-        if let Some(v) = pb.device.as_ref().and_then(|d| d.volume_percent) {
+        let recently_touched = self
+            .volume_touched
+            .get()
+            .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(2));
+        if let Some(v) = pb.device.as_ref().and_then(|d| d.volume_percent)
+            && !recently_touched
+        {
             self.volume.set_value(v as f64);
         }
         self.volume
             .set_sensitive(pb.device.as_ref().is_some_and(|d| d.supports_volume != Some(false)));
-        self.devices_button.set_label(&match &pb.device {
+        self.device_label.set_text(&match &pb.device {
             Some(d) => format!("⌁ {}", d.name),
-            None => "⌁ device".to_owned(),
+            None => "⌁".to_owned(),
         });
+        self.devices_button.set_tooltip_text(Some(&match &pb.device {
+            Some(d) => format!("Playing on {} · Spotify Connect devices", d.name),
+            None => "Spotify Connect devices".to_owned(),
+        }));
         self.progress.set_range(0.0, pb.duration_ms().max(1) as f64);
         self.duration.set_text(&fmt_time(pb.duration_ms()));
         self.updating.set(false);

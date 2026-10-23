@@ -186,10 +186,11 @@ pub struct Lyrics {
     pub animation: LyricAnimation,
     pub font_scale: f64,
     pub offset_ms: i64,
-    /// Capability gate: drive the renderer from live Spotify playback. Off by default because
-    /// Spotify's developer policy lists lyric synchronisation as a prohibited use; enabling it is
-    /// the user's own decision and only ever uses lyric files the user supplied.
-    pub spotify_sync: bool,
+    /// Show and sync lyrics for whatever Spotify is playing (LRCLIB, or your own files in
+    /// ~/.config/rtify/lyrics, which take precedence).
+    pub follow_playback: bool,
+    /// "google" (no key, like qtify) or "deepl" (API key in the Secret Service).
+    pub translation_provider: String,
 }
 
 impl Default for Lyrics {
@@ -203,7 +204,8 @@ impl Default for Lyrics {
             animation: LyricAnimation::Smooth,
             font_scale: 1.0,
             offset_ms: 0,
-            spotify_sync: false,
+            follow_playback: true,
+            translation_provider: "google".into(),
         }
     }
 }
@@ -214,12 +216,15 @@ pub struct Library {
     pub last_tab: String,
     pub filter: String,
     pub sort: String,
+    /// Song order per playlist/album URI ("title:asc", "added:desc" …); absent = custom order.
+    pub track_sort: BTreeMap<String, String>,
 }
 
 impl Default for Library {
     fn default() -> Self {
         Self {
             last_tab: "playlists".into(),
+            track_sort: BTreeMap::new(),
             filter: String::new(),
             sort: "recent".into(),
         }
@@ -296,7 +301,7 @@ mod tests {
         let c: Config = toml::from_str("version = 1\n[lyrics]\nromanization = false\n").unwrap();
         assert!(!c.lyrics.romanization);
         assert!(c.lyrics.enabled);
-        assert!(!c.lyrics.spotify_sync);
+        assert!(c.lyrics.follow_playback);
         assert_eq!(c.window, Window::default());
     }
 }

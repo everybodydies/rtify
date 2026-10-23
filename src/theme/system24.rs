@@ -184,6 +184,7 @@ button {{ background: transparent; background-image: none; color: {text}; border
 button:hover {{ background: {bg2}; border-color: {border_hover}; }}
 button:active {{ background: {bg3}; }}
 button:disabled {{ color: {text_faint}; border-color: {bg3}; }}
+button:focus-visible, entry:focus-visible, dropdown:focus-visible > button {{ outline: 1px solid {accent}; outline-offset: -1px; }}
 button.flat, button.rt-icon {{ border-color: transparent; color: {text_dim}; }}
 button.flat:hover, button.rt-icon:hover {{ color: {text}; background: transparent; border-color: transparent; }}
 button.rt-icon {{ padding: 2px 6px; min-width: 22px; }}
@@ -241,6 +242,30 @@ scrollbar {{ background: transparent; border: none; }}
 scrollbar slider {{ background: {border}; border-radius: 0; min-width: 3px; min-height: 3px; }}
 scrollbar slider:hover {{ background: {border_hover}; }}
 scrolledwindow undershoot, scrolledwindow overshoot {{ background: none; }}
+
+/* context menus */
+popover.rt-menu > contents {{ padding: 4px 0; min-width: 220px; }}
+button.rt-menu-item {{ border: none; border-left: 2px solid transparent; padding: 3px 14px; min-height: 24px; color: {text}; }}
+button.rt-menu-item:hover {{ background: {bg2}; border-left-color: {accent}; }}
+button.rt-menu-back {{ color: {text_dim}; }}
+
+/* sortable table headers */
+button.rt-th {{ border: none; padding: 0; min-height: 0; background: transparent; color: {text_faint}; }}
+button.rt-th label {{ font-size: 0.9em; letter-spacing: 1px; }}
+button.rt-th:hover {{ color: {text}; background: transparent; }}
+button.rt-th.rt-on {{ color: {accent}; }}
+
+/* one-click add: only visible on the hovered/selected row */
+button.rt-hover {{ opacity: 0; min-width: 0; padding: 0; }}
+list > row:hover button.rt-hover, list > row:selected button.rt-hover {{ opacity: 1; }}
+
+.rt-toast {{ background: {bg0}; border: 1px solid {accent}; padding: 6px 8px 6px 14px; }}
+.rt-toast label {{ color: {text}; }}
+popover.rt-tip > contents {{ padding: 2px 6px; }}
+label.rt-drag-tag {{ background: {bg0}; color: {accent}; border: 1px solid {accent}; padding: 3px 8px; }}
+dropdown.rt-compact > button {{ border-color: transparent; background: transparent; padding: 0 4px; color: {text_dim}; }}
+list > row.rt-drop {{ border-left-color: {accent}; }}
+list > row:drop(active) {{ border-left: 2px solid {accent}; background: {bg2}; box-shadow: none; }}
 
 .rt-banner {{ border: 1px solid {border}; padding: 4px 10px; margin: 0 8px 6px 8px; }}
 .rt-banner label {{ color: {text}; }}

@@ -138,6 +138,7 @@ pub struct Playlist {
     pub name: String,
     pub description: Option<String>,
     pub owner: Owner,
+    pub collaborative: bool,
     pub images: Option<Vec<Image>>,
     /// Current API name for the item count; older responses use `tracks`.
     pub items: Option<Total>,
@@ -159,6 +160,49 @@ pub struct Album {
     pub images: Vec<Image>,
     pub artists: Vec<ArtistRef>,
     pub release_date: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Artist {
+    pub id: String,
+    pub uri: String,
+    pub name: String,
+    pub images: Vec<Image>,
+    pub genres: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Cursors {
+    pub after: Option<String>,
+}
+
+/// `/me/following?type=artist` wraps a cursor page in `artists`.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct FollowedArtists {
+    pub artists: CursorPage<Artist>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct CursorPage<T> {
+    #[serde(default = "Vec::new")]
+    pub items: Vec<T>,
+    #[serde(default)]
+    pub next: Option<String>,
+    #[serde(default)]
+    pub cursors: Option<Cursors>,
+}
+
+impl<T> Default for CursorPage<T> {
+    fn default() -> Self {
+        Self {
+            items: Vec::new(),
+            next: None,
+            cursors: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -211,6 +255,7 @@ pub struct SearchResult {
     pub tracks: Option<Page<Track>>,
     pub playlists: Option<Page<Option<Playlist>>>,
     pub albums: Option<Page<Album>>,
+    pub artists: Option<Page<Artist>>,
 }
 
 impl<T> Default for Page<T> {

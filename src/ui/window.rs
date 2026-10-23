@@ -35,6 +35,10 @@ pub struct MainWindow {
     pub forward: gtk::Button,
     banner: gtk::Revealer,
     banner_label: gtk::Label,
+    toast: gtk::Revealer,
+    toast_label: gtk::Label,
+    toast_undo: gtk::Button,
+    toast_timer: std::rc::Rc<std::cell::Cell<Option<glib::SourceId>>>,
     pub player: PlayerBar,
     pub sidebar: Sidebar,
     pub collection: CollectionView,
@@ -124,12 +128,9 @@ impl MainWindow {
         back.add_css_class("rt-icon");
         let forward = button("▶", "Forward (Alt+→)");
         forward.add_css_class("rt-icon");
-        let brand = label("[ RTIFY ]", &["rt-brand"]);
-        brand.set_margin_start(8);
         let left = hbox(2);
         left.append(&back);
         left.append(&forward);
-        left.append(&brand);
         let search = gtk::SearchEntry::new();
         search.add_css_class("rt-search");
         search.set_placeholder_text(Some("what do you want to play?   (Ctrl+L)"));
@@ -139,18 +140,10 @@ impl MainWindow {
         let settings = button("⚙", "Settings (Ctrl+,)");
         settings.add_css_class("rt-icon");
         settings.set_action_name(Some(&format!("app.{}", Command::Preferences.name())));
-        let compact = button("▭", "Mini player (Ctrl+Shift+M)");
-        compact.add_css_class("rt-icon");
-        compact.set_action_name(Some(&format!("app.{}", Command::ToggleCompact.name())));
-        let hide = button("—", "Hide to tray (keeps playing and listening for shortcuts)");
-        hide.add_css_class("rt-icon");
-        hide.set_action_name(Some(&format!("app.{}", Command::HideWindow.name())));
         let right = hbox(4);
         right.append(&status_dot);
         right.append(&status);
         right.append(&settings);
-        right.append(&compact);
-        right.append(&hide);
         let topbar = gtk::CenterBox::new();
         topbar.add_css_class("rt-topbar");
         topbar.set_start_widget(Some(&left));
@@ -202,11 +195,33 @@ impl MainWindow {
         shell.set_vexpand(true);
         shell.set_margin_bottom(8);
 
+        // Short confirmations ("added to …  undo") float over the bottom of the content.
+        let toast_label = label("", &[]);
+        let toast_undo = button("undo", "Undo (Ctrl+Z)");
+        toast_undo.add_css_class("rt-chip");
+        let toast_box = hbox(12);
+        toast_box.add_css_class("rt-toast");
+        toast_box.append(&toast_label);
+        toast_box.append(&toast_undo);
+        let toast = gtk::Revealer::builder()
+            .child(&toast_box)
+            .transition_type(gtk::RevealerTransitionType::Crossfade)
+            .transition_duration(150)
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::End)
+            .margin_bottom(20)
+            .reveal_child(false)
+            .build();
+        toast.set_can_target(true);
+        let body = gtk::Overlay::new();
+        body.set_child(Some(&shell));
+        body.add_overlay(&toast);
+
         let root = vbox(0);
         root.add_css_class("rt-root");
         root.append(&topbar);
         root.append(&banner);
-        root.append(&shell);
+        root.append(&body);
         root.append(&player.root);
         window.set_child(Some(&root));
         player.set_toggles(false, cfg.now_playing_panel);
@@ -222,6 +237,10 @@ impl MainWindow {
             forward,
             banner,
             banner_label,
+            toast,
+            toast_label,
+            toast_undo: toast_undo.clone(),
+            toast_timer: Default::default(),
             player,
             sidebar,
             collection,
@@ -230,6 +249,8 @@ impl MainWindow {
             login,
         };
 
+        let a = app.clone();
+        toast_undo.connect_clicked(move |_| a.undo());
         let a = app.clone();
         this.back.connect_clicked(move |_| a.navigate_history(-1));
         let a = app.clone();
@@ -276,6 +297,14 @@ impl MainWindow {
                 match key {
                     gdk::Key::Left => a.navigate_history(-1),
                     gdk::Key::Right => a.navigate_history(1),
+                    _ => return glib::Propagation::Proceed,
+                }
+                return glib::Propagation::Stop;
+            }
+            if mods == gdk::ModifierType::CONTROL_MASK && !typing {
+                match key {
+                    gdk::Key::z => a.undo(),
+                    gdk::Key::f => a.focus_list_search(),
                     _ => return glib::Propagation::Proceed,
                 }
                 return glib::Propagation::Stop;
@@ -350,6 +379,22 @@ impl MainWindow {
             body.remove_css_class("rt-warning");
         }
         self.banner.set_reveal_child(!text.is_empty());
+    }
+
+    /// A short confirmation; `undo` adds the undo button. Hides itself after a few seconds.
+    pub fn toast(&self, text: &str, undo: bool) {
+        self.toast_label.set_text(text);
+        self.toast_undo.set_visible(undo);
+        self.toast.set_reveal_child(true);
+        if let Some(id) = self.toast_timer.take() {
+            id.remove();
+        }
+        let (toast, timer) = (self.toast.clone(), self.toast_timer.clone());
+        let id = glib::timeout_add_local_once(std::time::Duration::from_secs(if undo { 6 } else { 3 }), move || {
+            timer.take();
+            toast.set_reveal_child(false);
+        });
+        self.toast_timer.set(Some(id));
     }
 
     pub fn update_playback(&self, pb: &Playback, saved: Option<bool>) {

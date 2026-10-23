@@ -105,9 +105,10 @@ pub fn fmt_time(ms: u64) -> String {
     }
 }
 
+/// Remove all rows (but not other children such as a menu popover parented to the list).
 pub fn clear_list(list: &gtk::ListBox) {
-    while let Some(child) = list.first_child() {
-        list.remove(&child);
+    while let Some(row) = list.row_at_index(0) {
+        list.remove(&row);
     }
 }
 

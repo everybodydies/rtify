@@ -300,13 +300,22 @@ pub fn open(app: &App) {
         "lyrics",
         vec![
             row(
+                "follow Spotify playback",
+                "show and sync lyrics for the playing song: your files in ~/.config/rtify/lyrics first, then LRCLIB",
+                &switch(app, c.lyrics.follow_playback, |a, c, on| {
+                    c.lyrics.follow_playback = on;
+                    let a = a.clone();
+                    glib::idle_add_local_once(move || a.lyrics_follow_changed());
+                }),
+            ),
+            row(
                 "romanization",
-                "Japanese (kana; kanji with the japanese-kanji build), Korean, Chinese, Cyrillic",
+                "offline: Japanese (incl. kanji), Korean, Chinese, Cyrillic",
                 &switch(app, c.lyrics.romanization, |_, c, on| c.lyrics.romanization = on),
             ),
             row(
                 "translation",
-                "opt-in: sends the shown lyrics to DeepL",
+                "sends the shown lyrics to the provider below",
                 &switch(app, c.lyrics.translation_enabled, |a, c, on| {
                     c.lyrics.translation_enabled = on;
                     if on {
@@ -327,6 +336,16 @@ pub fn open(app: &App) {
                 "",
                 &switch(app, c.lyrics.translation_only, |_, c, on| c.lyrics.translation_only = on),
             ),
+            row(
+                "translation provider",
+                "Google needs no key (like qtify); DeepL uses your API key",
+                &dropdown(
+                    app,
+                    &["Google", "DeepL"],
+                    (c.lyrics.translation_provider == "deepl") as usize,
+                    |c, i| c.lyrics.translation_provider = if i == 1 { "deepl" } else { "google" }.into(),
+                ),
+            ),
             row("DeepL API key", "", &key_box),
             row(
                 "animation",
@@ -345,16 +364,6 @@ pub fn open(app: &App) {
                 "milliseconds; positive shows lines earlier",
                 &spin(app, c.lyrics.offset_ms as f64, -5000.0, 5000.0, 50.0, 0, |c, v| {
                     c.lyrics.offset_ms = v as i64
-                }),
-            ),
-            row(
-                "follow Spotify playback (capability gate)",
-                "off by default: Spotify's developer policy lists synchronising lyrics with its playback as prohibited. \
-                 Turning this on is your decision; rtify then only uses lyric files you put in ~/.config/rtify/lyrics.",
-                &switch(app, c.lyrics.spotify_sync, |a, c, on| {
-                    c.lyrics.spotify_sync = on;
-                    let a = a.clone();
-                    glib::idle_add_local_once(move || a.lyrics_gate_changed());
                 }),
             ),
         ],

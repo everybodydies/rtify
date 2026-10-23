@@ -1,16 +1,18 @@
-//! "Your library" sidebar: playlists/albums chips, filter, sort, and a list with cover thumbnails.
-//! Liked songs are pinned on top like in the official client. Tab, filter and sort persist.
+//! "Your library" sidebar: playlists/albums/artists chips, filter, sort, and a list with cover
+//! thumbnails. Liked Songs are pinned on top like in the official client. Songs dragged from the
+//! track table can be dropped on a playlist (or Liked Songs). Tab, filter and sort persist.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gtk::prelude::*;
+use gtk::{gdk, prelude::*};
 
+use super::menu::on_right_click;
 use super::widgets::*;
 use crate::app::App;
-use crate::spotify::model::{Album, Image, Playlist, pick_image};
+use crate::spotify::model::{Album, Artist, Image, Playlist, pick_image};
 
-pub const TABS: [&str; 2] = ["playlists", "albums"];
+pub const TABS: [&str; 3] = ["playlists", "albums", "artists"];
 pub const SORTS: [&str; 2] = ["recent", "a-z"];
 pub const LIKED_URI: &str = "rtify:liked";
 pub const SEARCH_URI: &str = "rtify:search";
@@ -19,11 +21,16 @@ pub const SEARCH_URI: &str = "rtify:search";
 pub struct Collection {
     pub uri: String,
     pub name: String,
+    /// One line for lists: owner/artist plus count where known.
     pub subtitle: String,
-    /// "playlist", "album", "liked" or "search".
+    /// Owner (playlists) or artists/year (albums), shown before the song count in headers.
+    pub meta: String,
+    /// "playlist", "album", "artist", "liked" or "search".
     pub kind: String,
     pub images: Vec<Image>,
     pub description: String,
+    pub owner_id: String,
+    pub collaborative: bool,
 }
 
 impl Collection {
@@ -33,22 +40,39 @@ impl Collection {
             uri: p.uri.clone(),
             name: p.name.clone(),
             subtitle: format!("{} · {} songs", owner, p.count()),
+            meta: owner,
             kind: "playlist".into(),
             images: p.images.clone().unwrap_or_default(),
             description: p.description.clone().unwrap_or_default(),
+            owner_id: p.owner.id.clone(),
+            collaborative: p.collaborative,
         }
     }
 
     pub fn from_album(a: &Album) -> Self {
         let artists = a.artists.iter().map(|x| x.name.as_str()).collect::<Vec<_>>().join(", ");
         let year = a.release_date.get(..4).unwrap_or("");
+        let meta = if year.is_empty() { artists } else { format!("{artists} · {year}") };
         Self {
             uri: a.uri.clone(),
             name: a.name.clone(),
-            subtitle: if year.is_empty() { artists } else { format!("{artists} · {year}") },
+            subtitle: meta.clone(),
+            meta,
             kind: "album".into(),
             images: a.images.clone(),
-            description: String::new(),
+            ..Default::default()
+        }
+    }
+
+    pub fn from_artist(a: &Artist) -> Self {
+        Self {
+            uri: a.uri.clone(),
+            name: a.name.clone(),
+            subtitle: "artist".into(),
+            meta: a.genres.iter().take(2).cloned().collect::<Vec<_>>().join(", "),
+            kind: "artist".into(),
+            images: a.images.clone(),
+            ..Default::default()
         }
     }
 
@@ -86,12 +110,19 @@ pub fn cover_widget(app: &App, c: &Collection, size: i32) -> gtk::Widget {
     match c.thumb_url(size as u32) {
         Some(url) => {
             let pic = cover_picture(size);
+            if c.kind == "artist" {
+                pic.add_css_class("rt-artist");
+            }
             let p = pic.clone();
             app.load_image(&url, move |t| p.set_paintable(t.as_ref()));
             pic.upcast()
         }
         None => {
-            let l = gtk::Label::new(Some(if c.kind == "liked" { "♥" } else { "♪" }));
+            let l = gtk::Label::new(Some(match c.kind.as_str() {
+                "liked" => "♥",
+                "artist" => "◎",
+                _ => "♪",
+            }));
             l.add_css_class("rt-cover-placeholder");
             l.set_size_request(size, size);
             l.set_valign(gtk::Align::Center);
@@ -105,6 +136,7 @@ struct SidebarState {
     tab: String,
     playlists: Vec<Collection>,
     albums: Vec<Collection>,
+    artists: Vec<Collection>,
     shown: Vec<Collection>,
     selected: Option<String>,
 }
@@ -137,16 +169,22 @@ impl Sidebar {
         }
         chips.append(&spacer());
         let sort = gtk::DropDown::from_strings(&SORTS);
+        sort.add_css_class("rt-compact");
+        sort.set_tooltip_text(Some("Sort"));
         sort.set_selected(SORTS.iter().position(|s| *s == cfg.sort).unwrap_or(0) as u32);
-        chips.append(&sort);
 
         let filter = gtk::Entry::new();
         filter.add_css_class("rt-filter");
-        filter.set_placeholder_text(Some("filter your library"));
+        filter.set_placeholder_text(Some("filter"));
         filter.set_text(&cfg.filter);
+        filter.set_hexpand(true);
+        let filter_row = hbox(6);
+        filter_row.append(&filter);
+        filter_row.append(&sort);
 
         let list = gtk::ListBox::new();
         list.add_css_class("rt-list");
+        list.add_css_class("rt-menu-host");
         let scroll = gtk::ScrolledWindow::builder()
             .child(&list)
             .vexpand(true)
@@ -155,7 +193,7 @@ impl Sidebar {
 
         let body = vbox(8);
         body.append(&chips);
-        body.append(&filter);
+        body.append(&filter_row);
         body.append(&scroll);
         let root = panel("your library", &body).root;
         root.set_size_request(240, -1);
@@ -205,13 +243,59 @@ impl Sidebar {
         });
         let s = this.clone();
         this.list.connect_row_activated(move |_, row| {
-            let c = s.state.borrow().shown.get(row.index() as usize).cloned();
-            if let Some(c) = c {
+            if let Some(c) = s.at(row.index()) {
                 s.app.open_collection(c, true);
             }
         });
+        let s = this.clone();
+        on_right_click(&this.list, move |_, y| {
+            let row = s.list.row_at_y(y as i32)?;
+            let c = s.at(row.index())?;
+            Some(s.app.collection_menu(&c))
+        });
+
+        // Drop songs onto a playlist (or Liked Songs).
+        let drop = gtk::DropTarget::new(gtk::glib::Type::STRING, gdk::DragAction::COPY);
+        let s = this.clone();
+        drop.connect_motion(move |_, _, y| {
+            match s
+                .list
+                .row_at_y(y as i32)
+                .filter(|r| s.at(r.index()).is_some_and(|c| s.app.accepts_drop(&c)))
+            {
+                Some(row) => {
+                    s.list.drag_highlight_row(&row);
+                    gdk::DragAction::COPY
+                }
+                None => {
+                    s.list.drag_unhighlight_row();
+                    gdk::DragAction::empty()
+                }
+            }
+        });
+        let s = this.clone();
+        drop.connect_leave(move |_| s.list.drag_unhighlight_row());
+        let s = this.clone();
+        drop.connect_drop(move |_, value, _, y| {
+            s.list.drag_unhighlight_row();
+            let Ok(text) = value.get::<String>() else { return false };
+            let uris: Vec<String> = text.lines().filter(|l| l.starts_with("spotify:")).map(String::from).collect();
+            let Some(c) = s.list.row_at_y(y as i32).and_then(|r| s.at(r.index())) else {
+                return false;
+            };
+            if uris.is_empty() || !s.app.accepts_drop(&c) {
+                return false;
+            }
+            s.app.drop_on(&c, uris);
+            true
+        });
+        this.list.add_controller(drop);
         this.rebuild();
         this
+    }
+
+    fn at(&self, index: i32) -> Option<Collection> {
+        self.state.borrow().shown.get(index.max(0) as usize).cloned()
     }
 
     fn rebuild(&self) {
@@ -219,9 +303,13 @@ impl Sidebar {
         let sort = SORTS.get(self.sort.selected() as usize).copied().unwrap_or("recent");
         let shown = {
             let st = self.state.borrow();
-            let items = if st.tab == "albums" { &st.albums } else { &st.playlists };
+            let items = match st.tab.as_str() {
+                "albums" => &st.albums,
+                "artists" => &st.artists,
+                _ => &st.playlists,
+            };
             let mut shown = visible(items, &filter, sort);
-            if st.tab != "albums" && filter.trim().is_empty() {
+            if st.tab == "playlists" && filter.trim().is_empty() {
                 shown.insert(0, Collection::liked());
             }
             shown
@@ -238,10 +326,21 @@ impl Sidebar {
             text.append(&ellipsized(&c.subtitle, &["rt-faint", "rt-small"]));
             b.append(&text);
             row.set_child(Some(&b));
+            row.set_tooltip_text(Some(&c.name));
             self.list.append(&row);
             if selected.as_deref() == Some(c.uri.as_str()) {
                 self.list.select_row(Some(&row));
             }
+        }
+        if shown.is_empty() {
+            self.list.append(&label(
+                if filter.trim().is_empty() {
+                    "nothing here yet"
+                } else {
+                    "no matches"
+                },
+                &["rt-faint"],
+            ));
         }
         self.state.borrow_mut().shown = shown;
     }
@@ -256,12 +355,42 @@ impl Sidebar {
         self.rebuild();
     }
 
+    pub fn set_artists(&self, items: Vec<Collection>) {
+        self.state.borrow_mut().artists = items;
+        self.rebuild();
+    }
+
+    pub fn playlists(&self) -> Vec<Collection> {
+        self.state.borrow().playlists.clone()
+    }
+
+    /// Update one playlist's song count after an edit.
+    pub fn bump_count(&self, uri: &str, delta: i64) {
+        let mut changed = false;
+        for p in self.state.borrow_mut().playlists.iter_mut().filter(|p| p.uri == uri) {
+            if let Some((owner, rest)) = p.subtitle.split_once(" · ")
+                && let Some(n) = rest.strip_suffix(" songs").and_then(|n| n.parse::<i64>().ok())
+            {
+                p.subtitle = format!("{owner} · {} songs", (n + delta).max(0));
+                changed = true;
+            }
+        }
+        if changed {
+            self.rebuild();
+        }
+    }
+
     pub fn find(&self, uri: &str) -> Option<Collection> {
         if uri == LIKED_URI {
             return Some(Collection::liked());
         }
         let st = self.state.borrow();
-        st.playlists.iter().chain(st.albums.iter()).find(|c| c.uri == uri).cloned()
+        st.playlists
+            .iter()
+            .chain(st.albums.iter())
+            .chain(st.artists.iter())
+            .find(|c| c.uri == uri)
+            .cloned()
     }
 
     pub fn first_playlist(&self) -> Option<Collection> {

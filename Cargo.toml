@@ -9,8 +9,9 @@ repository = "https://github.com/everybodydies/rtify"
 readme = "README.md"
 
 [features]
-default = []
-# Kanji readings via Lindera's embedded IPADIC dictionary (large; kana is always supported).
+default = ["japanese-kanji"]
+# Kanji readings via Lindera's embedded IPADIC dictionary (adds the dictionary to the binary;
+# build with --no-default-features for a small binary that romanizes kana only).
 japanese-kanji = ["dep:lindera"]
 
 [dependencies]
@@ -26,6 +27,7 @@ clap = { version = "4", features = ["derive"] }
 ksni = "0.3"
 ashpd = { version = "0.13", features = ["global_shortcuts"] }
 oo7 = "0.6"
+zbus = { version = "5", default-features = false, features = ["tokio"] }
 sha2 = "0.11"
 base64 = "0.23"
 getrandom = "0.4"

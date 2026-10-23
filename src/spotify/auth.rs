@@ -20,6 +20,9 @@ pub const SCOPES: &[&str] = &[
     "user-library-modify",
     "playlist-read-private",
     "playlist-read-collaborative",
+    "playlist-modify-private",
+    "playlist-modify-public",
+    "user-follow-read",
 ];
 
 pub fn accounts_base() -> String {

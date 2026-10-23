@@ -13,11 +13,12 @@ use gtk::{gio, glib, prelude::*};
 use crate::cli::Cli;
 use crate::commands::Command;
 use crate::config::{Config, Notifications};
+use crate::desktop::mpris::{self, MprisEvent, MprisHandle, MprisState};
 use crate::desktop::shortcuts::{self, ShortcutEvent};
 use crate::desktop::tray::{self, TrayHandle, TrayState};
-use crate::lyrics::provider::{self, LocalFileProvider, LyricCache, LyricsProvider, TrackQuery, demo};
+use crate::lyrics::provider::{self, LocalFileProvider, LyricsProvider, TrackQuery, demo};
 use crate::lyrics::synchronization::LyricClock;
-use crate::lyrics::{LyricDocument, romanization, translation};
+use crate::lyrics::{LyricDocument, google, lrclib, romanization, translation};
 use crate::paths::{self, APP_ID};
 use crate::persistence::{ConfigStore, SessionStore};
 use crate::runtime::{self, rt, spawn_then};
@@ -30,6 +31,7 @@ use crate::theme::manager::ThemeManager;
 use crate::ui::collection::TrackRow;
 use crate::ui::library::{Collection, LIKED_URI, SEARCH_URI};
 use crate::ui::lyrics::view::{Clock, ViewOptions};
+use crate::ui::menu::Menu;
 use crate::ui::window::MainWindow;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -38,6 +40,9 @@ pub enum PlayerOp {
     SetVolume(u32),
     Like(bool),
 }
+
+/// Synced lyrics run this far ahead of the reported position (as in qtify).
+const LYRIC_LEAD_MS: u64 = 250;
 
 /// What the lyrics page currently shows.
 #[derive(Debug, Clone, PartialEq)]
@@ -51,6 +56,20 @@ enum LyricsSource {
 
 /// Rows and the next page offset of a loaded collection.
 type TrackPage = (Vec<TrackRow>, Option<u32>);
+
+/// A playlist change that Ctrl+Z (or the toast) can revert.
+#[derive(Debug, Clone)]
+enum UndoOp {
+    Added {
+        playlist: Collection,
+        uris: Vec<String>,
+    },
+    /// `(uri, position)` in the playlist's order before removal.
+    Removed {
+        playlist: Collection,
+        entries: Vec<(String, u32)>,
+    },
+}
 
 /// Back/forward history of the main view.
 #[derive(Debug, Clone)]
@@ -76,6 +95,7 @@ pub struct Inner {
     window: OnceCell<MainWindow>,
     prefs: RefCell<Option<gtk::Window>>,
     tray: RefCell<Option<TrayHandle>>,
+    mpris: RefCell<Option<MprisHandle>>,
     hold: RefCell<Option<gio::ApplicationHoldGuard>>,
     save_config: RefCell<Option<glib::SourceId>>,
     save_session: RefCell<Option<glib::SourceId>>,
@@ -87,10 +107,13 @@ pub struct Inner {
     started: Cell<bool>,
     lyrics_source: RefCell<LyricsSource>,
     lyrics_doc: RefCell<Option<LyricDocument>>,
-    lyric_cache: RefCell<LyricCache>,
+    /// LRCLIB/local results per track (including "instrumental" and "not found").
+    lyric_results: RefCell<std::collections::HashMap<String, lrclib::Found>>,
+    translations: RefCell<std::collections::HashMap<String, LyricDocument>>,
     deepl_key: RefCell<Option<String>>,
     pub shortcut_status: RefCell<String>,
     history: RefCell<Vec<Nav>>,
+    undo: RefCell<Vec<UndoOp>>,
     history_pos: Cell<usize>,
 }
 
@@ -156,6 +179,7 @@ impl App {
             window: OnceCell::new(),
             prefs: RefCell::default(),
             tray: RefCell::default(),
+            mpris: RefCell::default(),
             hold: RefCell::default(),
             save_config: RefCell::default(),
             save_session: RefCell::default(),
@@ -167,10 +191,12 @@ impl App {
             started: Cell::new(false),
             lyrics_source: RefCell::new(LyricsSource::None),
             lyrics_doc: RefCell::default(),
-            lyric_cache: RefCell::default(),
+            lyric_results: RefCell::default(),
+            translations: RefCell::default(),
             deepl_key: RefCell::default(),
             shortcut_status: RefCell::new("not registered".into()),
             history: RefCell::default(),
+            undo: RefCell::default(),
             history_pos: Cell::new(0),
         }));
         // Background operation: the process outlives its window until Quit.
@@ -208,8 +234,9 @@ impl App {
             app.win().set_compact(true);
         }
         app.apply_lyrics_options();
-        app.open_demo_lyrics(0, false);
+        app.win().lyrics.view.set_message("nothing playing");
         app.start_tray();
+        app.start_mpris();
         app.start_shortcuts();
         app.start_progress_timer();
         app.connect_spotify();
@@ -474,6 +501,7 @@ impl App {
                 } else {
                     w.show_page("lyrics");
                     self.present();
+                    self.load_track_lyrics();
                 }
                 self.schedule_session_save();
             }
@@ -495,9 +523,7 @@ impl App {
             }
             Command::CycleRepeat => {
                 let r = self.playback.borrow().repeat.next();
-                self.playback.borrow_mut().repeat = r;
-                self.refresh_player_ui();
-                self.simple(move |c| async move { c.repeat(r.as_str(), None).await });
+                self.set_repeat(r);
             }
             Command::VolumeUp | Command::VolumeDown => {
                 let cur = self.playback.borrow().device.as_ref().and_then(|d| d.volume_percent).unwrap_or(50) as i32;
@@ -803,6 +829,7 @@ impl App {
     fn refresh_player_ui(&self) {
         let pb = self.playback.borrow().clone();
         self.win().update_playback(&pb, self.saved_current.get());
+        self.update_mpris(&pb);
     }
 
     fn start_progress_timer(&self) {
@@ -845,9 +872,7 @@ impl App {
             n.set_default_action(&format!("app.{}", Command::ShowWindow.name()));
             self.gtk_app.send_notification(Some("track"), &n);
         }
-        if self.config.borrow().config.lyrics.spotify_sync {
-            self.lookup_track_lyrics(&track);
-        }
+        self.load_track_lyrics();
     }
 
     fn load_cover(&self, url: &str) {
@@ -929,7 +954,9 @@ impl App {
 
     fn after_command(&self, r: Result<(), ApiError>) {
         if let Err(e) = r {
-            let msg = if e.is_no_device() {
+            let msg = if e.is_scope() {
+                "Spotify needs new permissions for this — sign out in settings and sign in again".to_owned()
+            } else if e.is_no_device() {
                 "no active Spotify device — start Spotify somewhere or pick a device under [ DEVICES ]".to_owned()
             } else if e.needs_premium() {
                 "this needs Spotify Premium".to_owned()
@@ -1082,13 +1109,27 @@ impl App {
                     }
                     offset += n;
                 }
-                Ok::<_, ApiError>((playlists, albums))
+                // Followed artists are optional (older logins lack the scope).
+                let mut artists = Vec::new();
+                let mut after: Option<String> = None;
+                for _ in 0..4 {
+                    let Ok(page) = client.followed_artists(after.as_deref()).await else {
+                        break;
+                    };
+                    artists.extend(page.items.iter().map(Collection::from_artist));
+                    after = page.cursors.and_then(|c| c.after);
+                    if page.next.is_none() || after.is_none() {
+                        break;
+                    }
+                }
+                Ok::<_, ApiError>((playlists, albums, artists))
             },
             move |r| match r {
-                Ok((playlists, albums)) => {
+                Ok((playlists, albums, artists)) => {
                     let side = &app.win().sidebar;
                     side.set_playlists(playlists);
                     side.set_albums(albums);
+                    side.set_artists(artists);
                     // Restore the open collection from the last session; first run shows the
                     // first playlist rather than an empty view.
                     let saved = app
@@ -1106,19 +1147,42 @@ impl App {
         );
     }
 
+    fn is_editable(&self, c: &Collection) -> bool {
+        c.kind == "playlist" && (c.collaborative || self.account.borrow().as_deref() == Some(c.owner_id.as_str()))
+    }
+
     /// Show a collection in the main view and load its tracks. `record` adds it to back/forward.
+    /// Revisits come from the cache, with the scroll position where you left it.
     pub fn open_collection(&self, c: Collection, record: bool) {
+        // Prefer the full library entry (owner, images) when we only have a uri and a name.
+        let c = self.win().sidebar.find(&c.uri).filter(|f| f.kind == c.kind).unwrap_or(c);
         if record {
             self.push_history(Nav::Collection(c.clone()));
         }
+        let editable = self.is_editable(&c);
         let w = self.win();
-        w.collection.show(&c);
         w.sidebar.mark_selected(Some(&c.uri));
         if w.page() != "library" {
             w.show_page("library");
         }
         self.remember_selection(&c.uri);
+        if w.collection.restore(&c, editable) {
+            return;
+        }
+        w.collection.show(&c, editable);
         self.load_tracks(&c.uri, 0);
+    }
+
+    /// Open an album/artist/playlist by URI (from a context menu).
+    pub fn open_uri_view(&self, uri: &str, name: &str) {
+        let kind = crate::spotify::client::uri_kind(uri).to_owned();
+        let c = self.win().sidebar.find(uri).unwrap_or(Collection {
+            uri: uri.to_owned(),
+            name: name.to_owned(),
+            kind,
+            ..Default::default()
+        });
+        self.open_collection(c, true);
     }
 
     fn push_history(&self, nav: Nav) {
@@ -1157,7 +1221,22 @@ impl App {
         let uri = uri.to_owned();
         let kind = crate::spotify::client::uri_kind(&uri).to_owned();
         let id = crate::spotify::client::uri_id(&uri).to_owned();
+        let name = view.state.borrow().collection.as_ref().map(|c| c.name.clone()).unwrap_or_default();
         let liked = uri == LIKED_URI;
+        if kind == "artist" {
+            // Albums as cards, songs below.
+            let (client2, v2, uri2) = (client.clone(), view.clone(), uri.clone());
+            spawn_then(async move { client2.artist_albums(&id).await }, move |r| {
+                if let Ok(p) = r {
+                    v2.show_artist_albums(&uri2, p.items.iter().map(Collection::from_album).collect());
+                }
+            });
+            spawn_then(async move { client.artist_tracks(&name).await }, move |r| match r {
+                Ok(tracks) => view.append(&uri, tracks.into_iter().map(TrackRow::new).collect(), None),
+                Err(e) => view.set_error(&e.to_string()),
+            });
+            return;
+        }
         spawn_then(
             async move {
                 if liked {
@@ -1206,12 +1285,21 @@ impl App {
                     .collect();
                 Ok((rows, next))
             },
-            move |r: Result<TrackPage, ApiError>| match r {
-                Ok((rows, next)) => view.append(&uri, rows, next),
-                Err(ApiError::Status(403, _)) => {
-                    view.set_error("Spotify doesn't let apps read this playlist (only your own and collaborative ones)")
+            {
+                let app = self.clone();
+                move |r: Result<TrackPage, ApiError>| match r {
+                    Ok((rows, next)) => {
+                        view.append(&uri, rows, next);
+                        // Keep going: counts, total length, sorting and in-list search need it all.
+                        if next.is_some() {
+                            app.load_more_tracks();
+                        }
+                    }
+                    Err(ApiError::Status(403, _)) => {
+                        view.set_error("Spotify doesn't let apps read this playlist (only your own and collaborative ones)")
+                    }
+                    Err(e) => view.set_error(&e.to_string()),
                 }
-                Err(e) => view.set_error(&e.to_string()),
             },
         );
     }
@@ -1246,6 +1334,11 @@ impl App {
                 cols.extend(
                     res.albums
                         .map(|a| a.items.iter().map(Collection::from_album).collect::<Vec<_>>())
+                        .unwrap_or_default(),
+                );
+                cols.extend(
+                    res.artists
+                        .map(|a| a.items.iter().map(Collection::from_artist).collect::<Vec<_>>())
                         .unwrap_or_default(),
                 );
                 let tracks = res.tracks.map(|t| t.items).unwrap_or_default();
@@ -1284,15 +1377,16 @@ impl App {
         self.simple(move |c| async move { c.shuffle(on, None).await });
     }
 
-    pub fn play_from(&self, selection: &str, tracks: &[Track], index: usize) {
+    /// `as_context`: play the playlist/album itself from the track (Spotify's order); otherwise
+    /// play exactly the given list (sorted or filtered views, liked songs, search, artists).
+    pub fn play_from(&self, selection: &str, tracks: &[Track], index: usize, as_context: bool) {
         let Some(track) = tracks.get(index) else { return };
-        let req = match crate::spotify::client::uri_kind(selection) {
-            "playlist" | "album" => PlayRequest::context(selection, Some(&track.uri)),
-            _ => {
-                // Liked songs and search results: queue the visible list from the clicked track.
-                let uris: Vec<String> = tracks.iter().skip(index).take(100).map(|t| t.uri.clone()).collect();
-                PlayRequest::tracks(uris, 0)
-            }
+        let kind = crate::spotify::client::uri_kind(selection);
+        let req = if as_context && matches!(kind, "playlist" | "album") {
+            PlayRequest::context(selection, Some(&track.uri))
+        } else {
+            let uris: Vec<String> = tracks.iter().skip(index).take(100).map(|t| t.uri.clone()).collect();
+            PlayRequest::tracks(uris, 0)
         };
         let device = if self.playback.borrow().device.is_some() {
             None
@@ -1300,6 +1394,451 @@ impl App {
             self.devices.borrow().first().and_then(|d| d.id.clone())
         };
         self.simple(move |c| async move { c.play(Some(&req), device.as_deref()).await });
+    }
+
+    pub fn play_collection(&self, c: &Collection, shuffle: bool) {
+        if shuffle {
+            self.set_shuffle(true);
+        }
+        let req = match c.kind.as_str() {
+            "playlist" | "album" | "artist" => PlayRequest::context(&c.uri, None),
+            _ => {
+                // Liked songs: open and play from the top (the list is the context).
+                return self.open_collection(c.clone(), true);
+            }
+        };
+        self.simple(move |cl| async move { cl.play(Some(&req), None).await });
+    }
+
+    pub fn focus_list_search(&self) {
+        let w = self.win();
+        if w.page() != "library" {
+            w.show_page("library");
+        }
+        w.collection.focus_filter();
+    }
+
+    pub fn toast(&self, text: &str, undo: bool) {
+        self.win().toast(text, undo);
+    }
+
+    pub fn queue_uris(&self, uris: Vec<String>) {
+        let n = uris.len();
+        let client = self.client();
+        let app = self.clone();
+        spawn_then(
+            async move {
+                // One at a time keeps the order.
+                for u in &uris {
+                    client.add_to_queue(u).await?;
+                }
+                Ok::<_, ApiError>(())
+            },
+            move |r| match r {
+                Ok(()) => {
+                    app.toast(
+                        &if n == 1 {
+                            "added to queue".to_owned()
+                        } else {
+                            format!("{n} songs added to queue")
+                        },
+                        false,
+                    );
+                    app.refresh_queue();
+                }
+                Err(e) => app.after_command(Err(e)),
+            },
+        );
+    }
+
+    pub fn editable_playlists(&self) -> Vec<Collection> {
+        self.win().sidebar.playlists().into_iter().filter(|p| self.is_editable(p)).collect()
+    }
+
+    pub fn last_playlist(&self) -> Option<Collection> {
+        let uri = self
+            .account
+            .borrow()
+            .as_ref()
+            .and_then(|a| self.session.borrow().data.accounts.get(a).and_then(|s| s.last_playlist.clone()))?;
+        self.win().sidebar.find(&uri).filter(|p| self.is_editable(p))
+    }
+
+    pub fn accepts_drop(&self, c: &Collection) -> bool {
+        c.kind == "liked" || self.is_editable(c)
+    }
+
+    pub fn drop_on(&self, c: &Collection, uris: Vec<String>) {
+        if c.kind == "liked" {
+            self.set_saved_many(uris, true);
+        } else {
+            self.add_to_playlist(c, uris);
+        }
+    }
+
+    /// Add songs to a playlist, skipping ones already in it. The playlist's contents are always
+    /// checked first (from the open view or fetched): Spotify's removal deletes every occurrence,
+    /// so undoing an add of a song that was already there would otherwise delete the original.
+    pub fn add_to_playlist(&self, p: &Collection, uris: Vec<String>) {
+        let mut wanted: Vec<String> = Vec::new();
+        for u in uris {
+            if !wanted.contains(&u) {
+                wanted.push(u);
+            }
+        }
+        if let Some(account) = self.account.borrow().clone() {
+            self.session.borrow_mut().account_mut(&account).last_playlist = Some(p.uri.clone());
+            self.schedule_session_save();
+        }
+        let known = self.win().collection.known_uris(&p.uri);
+        let id = crate::spotify::client::uri_id(&p.uri).to_owned();
+        let client = self.client();
+        let app = self.clone();
+        let p = p.clone();
+        spawn_then(
+            async move {
+                let existing = match known {
+                    Some(k) => k,
+                    None => {
+                        let mut all = Vec::new();
+                        let mut offset = 0;
+                        loop {
+                            let page = client.playlist_items(&id, offset).await?;
+                            let n = page.items.len() as u32;
+                            all.extend(page.items.into_iter().filter_map(|i| i.item.map(|t| t.uri)));
+                            if page.next.is_none() || n == 0 || all.len() >= 10_000 {
+                                break;
+                            }
+                            offset += n;
+                        }
+                        all
+                    }
+                };
+                let fresh: Vec<String> = wanted.into_iter().filter(|u| !existing.contains(u)).collect();
+                if !fresh.is_empty() {
+                    client.add_to_playlist(&id, &fresh, None).await?;
+                }
+                Ok::<_, ApiError>(fresh)
+            },
+            move |r| match r {
+                Ok(fresh) if fresh.is_empty() => app.toast(&format!("already in “{}”", p.name), false),
+                Ok(fresh) => {
+                    let n = fresh.len();
+                    app.after_playlist_edit(&p, n as i64);
+                    app.undo.borrow_mut().push(UndoOp::Added {
+                        playlist: p.clone(),
+                        uris: fresh,
+                    });
+                    app.toast(
+                        &format!(
+                            "added {} to “{}”",
+                            if n == 1 { "1 song".into() } else { format!("{n} songs") },
+                            p.name
+                        ),
+                        true,
+                    );
+                }
+                Err(e) => app.after_command(Err(e)),
+            },
+        );
+    }
+
+    pub fn remove_from_playlist(&self, p: &Collection, uris: Vec<String>) {
+        let positions = self.win().collection.positions_of(&p.uri, &uris);
+        let id = crate::spotify::client::uri_id(&p.uri).to_owned();
+        let client = self.client();
+        let app = self.clone();
+        let p = p.clone();
+        let gone = uris.clone();
+        spawn_then(async move { client.remove_from_playlist(&id, &gone).await }, move |r| match r {
+            Ok(()) => {
+                let n = positions.len().max(uris.len());
+                app.win().collection.remove_uris(&p.uri, &uris);
+                app.win().sidebar.bump_count(&p.uri, -(n as i64));
+                app.undo.borrow_mut().push(UndoOp::Removed {
+                    playlist: p.clone(),
+                    entries: positions,
+                });
+                app.toast(
+                    &format!(
+                        "removed {} from “{}”",
+                        if n == 1 { "1 song".into() } else { format!("{n} songs") },
+                        p.name
+                    ),
+                    true,
+                );
+            }
+            Err(e) => app.after_command(Err(e)),
+        });
+    }
+
+    fn after_playlist_edit(&self, p: &Collection, delta: i64) {
+        let w = self.win();
+        w.collection.invalidate(&p.uri);
+        w.sidebar.bump_count(&p.uri, delta);
+        if w.collection.uri().as_deref() == Some(p.uri.as_str()) {
+            let editable = self.is_editable(p);
+            let (adj_value, view) = (w.collection.scroll_value(), w.collection.clone());
+            view.show(p, editable);
+            self.load_tracks(&p.uri, 0);
+            view.set_scroll_after_load(adj_value);
+        }
+    }
+
+    /// Ctrl+Z / the toast's "undo": revert the last playlist change.
+    pub fn undo(&self) {
+        let Some(op) = self.undo.borrow_mut().pop() else {
+            return self.toast("nothing to undo", false);
+        };
+        let client = self.client();
+        let app = self.clone();
+        match op {
+            UndoOp::Added { playlist, uris } => {
+                let id = crate::spotify::client::uri_id(&playlist.uri).to_owned();
+                let n = uris.len() as i64;
+                spawn_then(async move { client.remove_from_playlist(&id, &uris).await }, move |r| match r {
+                    Ok(()) => {
+                        app.after_playlist_edit(&playlist, -n);
+                        app.toast(&format!("undone · removed again from “{}”", playlist.name), false);
+                    }
+                    Err(e) => app.after_command(Err(e)),
+                });
+            }
+            UndoOp::Removed { playlist, mut entries } => {
+                let id = crate::spotify::client::uri_id(&playlist.uri).to_owned();
+                entries.sort_by_key(|(_, pos)| *pos);
+                let n = entries.len() as i64;
+                spawn_then(
+                    async move {
+                        // Ascending positions: each insert lands where the song used to be.
+                        for (uri, pos) in &entries {
+                            client.add_to_playlist(&id, std::slice::from_ref(uri), Some(*pos)).await?;
+                        }
+                        Ok::<_, ApiError>(())
+                    },
+                    move |r| match r {
+                        Ok(()) => {
+                            app.after_playlist_edit(&playlist, n);
+                            app.toast(&format!("undone · restored in “{}”", playlist.name), false);
+                        }
+                        Err(e) => app.after_command(Err(e)),
+                    },
+                );
+            }
+        }
+    }
+
+    pub fn set_saved_many(&self, uris: Vec<String>, on: bool) {
+        let n = uris.len();
+        let current = self.playback.borrow().track_uri().map(String::from);
+        let client = self.client();
+        let app = self.clone();
+        let list = uris.clone();
+        spawn_then(async move { client.set_saved_many(&list, on).await }, move |r| match r {
+            Ok(()) => {
+                if current.as_ref().is_some_and(|c| uris.contains(c)) {
+                    app.saved_current.set(Some(on));
+                    app.refresh_player_ui();
+                }
+                let w = app.win();
+                w.collection.invalidate(LIKED_URI);
+                if w.collection.uri().as_deref() == Some(LIKED_URI) {
+                    if on {
+                        app.open_collection(Collection::liked(), false);
+                    } else {
+                        w.collection.remove_uris(LIKED_URI, &uris);
+                    }
+                }
+                let what = if n == 1 { "1 song".to_owned() } else { format!("{n} songs") };
+                app.toast(
+                    &if on {
+                        format!("saved {what} to liked songs")
+                    } else {
+                        format!("removed {what} from liked songs")
+                    },
+                    false,
+                );
+            }
+            Err(e) => app.after_command(Err(e)),
+        });
+    }
+
+    pub fn copy_links(&self, uris: &[String]) {
+        let links: Vec<String> = uris
+            .iter()
+            .map(|u| format!("https://open.spotify.com/{}", u.trim_start_matches("spotify:").replace(':', "/")))
+            .collect();
+        self.win().window.clipboard().set_text(&links.join("\n"));
+        self.toast(if links.len() == 1 { "link copied" } else { "links copied" }, false);
+    }
+
+    /// Right-click menu for a playlist, album, artist or Liked Songs.
+    pub fn collection_menu(&self, c: &Collection) -> Menu {
+        let menu = Menu::new();
+        let (a, c1) = (self.clone(), c.clone());
+        menu.item("open", move || a.open_collection(c1.clone(), true));
+        let (a, c1) = (self.clone(), c.clone());
+        menu.item("play", move || a.play_collection(&c1, false));
+        if c.kind != "liked" {
+            let (a, c1) = (self.clone(), c.clone());
+            menu.item("shuffle play", move || a.play_collection(&c1, true));
+        }
+        if c.kind == "album" {
+            let saved = self.win().sidebar.find(&c.uri).is_some();
+            let (a, u) = (self.clone(), c.uri.clone());
+            menu.item(
+                if saved {
+                    "remove from your library"
+                } else {
+                    "save to your library"
+                },
+                move || a.save_collection(&u, !saved),
+            );
+        }
+        if c.kind != "liked" {
+            menu.separator();
+            let (a, u) = (self.clone(), c.uri.clone());
+            menu.item("copy link", move || a.copy_links(std::slice::from_ref(&u)));
+        }
+        menu
+    }
+
+    fn save_collection(&self, uri: &str, on: bool) {
+        let client = self.client();
+        let app = self.clone();
+        let u = uri.to_owned();
+        spawn_then(async move { client.set_saved_many(&[u], on).await }, move |r| match r {
+            Ok(()) => {
+                app.toast(if on { "saved to your library" } else { "removed from your library" }, false);
+                app.load_library_quiet();
+            }
+            Err(e) => app.after_command(Err(e)),
+        });
+    }
+
+    /// Refresh the sidebar without changing what the main view shows.
+    fn load_library_quiet(&self) {
+        let client = self.client();
+        let app = self.clone();
+        spawn_then(
+            async move {
+                let mut albums = Vec::new();
+                let mut offset = 0;
+                for _ in 0..4 {
+                    let page = client.saved_albums(offset).await?;
+                    let n = page.items.len() as u32;
+                    albums.extend(page.items.iter().map(|s| Collection::from_album(&s.album)));
+                    if page.next.is_none() || n == 0 {
+                        break;
+                    }
+                    offset += n;
+                }
+                Ok::<_, ApiError>(albums)
+            },
+            move |r| {
+                if let Ok(albums) = r {
+                    app.win().sidebar.set_albums(albums);
+                }
+            },
+        );
+    }
+
+    // --- MPRIS --------------------------------------------------------------------------------
+
+    fn start_mpris(&self) {
+        let (tx, rx) = async_channel::unbounded();
+        let app = self.clone();
+        runtime::forward(rx, move |ev| app.mpris_event(ev));
+        let app = self.clone();
+        spawn_then(async move { mpris::start(tx).await }, move |r| match r {
+            Ok(h) => {
+                *app.mpris.borrow_mut() = Some(h);
+                let pb = app.playback.borrow().clone();
+                app.update_mpris(&pb);
+            }
+            Err(e) => log::warn!("MPRIS unavailable: {e}"),
+        });
+    }
+
+    fn update_mpris(&self, pb: &Playback) {
+        let Some(h) = self.mpris.borrow().clone() else { return };
+        let t = pb.track.as_ref();
+        let state = MprisState {
+            playing: pb.playing && !pb.stale,
+            has_track: t.is_some(),
+            track_id: t.map(|t| crate::spotify::client::uri_id(&t.uri).to_owned()).unwrap_or_default(),
+            uri: t.map(|t| t.uri.clone()).unwrap_or_default(),
+            title: t.map(|t| t.name.clone()).unwrap_or_default(),
+            artists: t
+                .map(|t| {
+                    let names: Vec<String> = t.artists.iter().map(|a| a.name.clone()).collect();
+                    if names.is_empty() { vec![t.artist_names()] } else { names }
+                })
+                .unwrap_or_default(),
+            album: t.map(|t| t.album_name().to_owned()).unwrap_or_default(),
+            art_url: t
+                .and_then(|t| pick_image(t.images(), 300))
+                .map(|i| i.url.clone())
+                .unwrap_or_default(),
+            length_ms: pb.duration_ms(),
+            position_ms: pb.position_now(),
+            volume: pb.device.as_ref().and_then(|d| d.volume_percent),
+            shuffle: pb.shuffle,
+            loop_status: match pb.repeat {
+                Repeat::Off => "None",
+                Repeat::Context => "Playlist",
+                Repeat::Track => "Track",
+            }
+            .into(),
+        };
+        rt().spawn(async move {
+            if let Err(e) = h.update(state).await {
+                log::debug!("mpris update: {e}");
+            }
+        });
+    }
+
+    fn mpris_event(&self, ev: MprisEvent) {
+        let playing = self.playback.borrow().playing;
+        match ev {
+            MprisEvent::Command(c) => self.command(c),
+            MprisEvent::Play if !playing => self.command(Command::PlayPause),
+            MprisEvent::Pause if playing => self.command(Command::PlayPause),
+            MprisEvent::Play | MprisEvent::Pause => {}
+            MprisEvent::SeekTo(ms) => self.player(PlayerOp::Seek(ms)),
+            MprisEvent::SeekBy(d) => {
+                let pb = self.playback.borrow().clone();
+                let to = (pb.position_now() as i64 + d).clamp(0, pb.duration_ms() as i64) as u64;
+                self.player(PlayerOp::Seek(to));
+            }
+            MprisEvent::SetVolume(v) => self.player(PlayerOp::SetVolume(v)),
+            MprisEvent::SetShuffle(on) => self.set_shuffle(on),
+            MprisEvent::SetLoop(l) => self.set_repeat(match l.as_str() {
+                "Track" => Repeat::Track,
+                "Playlist" => Repeat::Context,
+                _ => Repeat::Off,
+            }),
+            MprisEvent::OpenUri(uri) => self.open_uri(&uri),
+        }
+    }
+
+    pub fn set_repeat(&self, r: Repeat) {
+        self.playback.borrow_mut().repeat = r;
+        self.refresh_player_ui();
+        self.simple(move |c| async move { c.repeat(r.as_str(), None).await });
+    }
+
+    /// Play a `spotify:…` URI or an open.spotify.com link.
+    pub fn open_uri(&self, uri: &str) {
+        let Some(uri) = crate::spotify::client::normalize_uri(uri) else {
+            return self.notice(&format!("not a Spotify link: {uri}"), true);
+        };
+        let req = if crate::spotify::client::uri_kind(&uri) == "track" || crate::spotify::client::uri_kind(&uri) == "episode" {
+            PlayRequest::tracks(vec![uri], 0)
+        } else {
+            PlayRequest::context(&uri, None)
+        };
+        self.simple(move |c| async move { c.play(Some(&req), None).await });
     }
 
     // --- tray & shortcuts ----------------------------------------------------------------------
@@ -1375,11 +1914,8 @@ impl App {
     }
 
     pub fn apply_lyrics_options(&self) {
-        self.win().lyrics.set_options(self.view_options());
-        let gate = self.config.borrow().config.lyrics.spotify_sync;
-        self.win()
-            .lyrics
-            .set_sync_status(if gate { "sync: spotify" } else { "sync: local clock" });
+        let follow = self.config.borrow().config.lyrics.follow_playback;
+        self.win().lyrics.set_options(self.view_options(), follow);
     }
 
     fn prepare(&self, mut doc: LyricDocument) -> LyricDocument {
@@ -1400,13 +1936,7 @@ impl App {
         let doc = demo::song(index);
         let label = doc
             .as_ref()
-            .map(|d| {
-                format!(
-                    "demo · {} — {}",
-                    d.title.clone().unwrap_or_default(),
-                    d.artist.clone().unwrap_or_default()
-                )
-            })
+            .map(|d| format!("{} — {}", d.title.clone().unwrap_or_default(), d.artist.clone().unwrap_or_default()))
             .unwrap_or_default();
         let mut clock = LyricClock::new(doc.as_ref().map(|d| d.duration_ms() + 1500));
         clock.set_playing(autoplay);
@@ -1418,84 +1948,124 @@ impl App {
             Ok(doc) => {
                 let mut clock = LyricClock::new(Some(doc.duration_ms() + 1500));
                 clock.set_playing(true);
-                let label = format!("file · {}", path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default());
+                let label = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                 self.show_lyrics(Some(doc), LyricsSource::File(path.to_owned()), &label, Clock::Local(clock));
             }
             Err(e) => self.notice(&e.to_string(), true),
         }
     }
 
-    /// Capability gate on: look for a user-supplied file matching the playing track.
-    fn lookup_track_lyrics(&self, track: &Track) {
-        let query = TrackQuery {
+    fn track_query(track: &Track) -> TrackQuery {
+        TrackQuery {
             id: track.id.clone().unwrap_or_default(),
             title: track.name.clone(),
             artists: track.artists.iter().map(|a| a.name.clone()).collect(),
             album: track.album_name().to_owned(),
             duration_ms: track.duration_ms,
-        };
-        let key = query.key();
-        if let Some(doc) = self.lyric_cache.borrow_mut().get(&key).cloned() {
-            return self.show_track_lyrics(Some(doc), &key, track);
         }
+    }
+
+    /// Like qtify: lyrics for the playing track, synced to playback. Your own files in
+    /// ~/.config/rtify/lyrics win; otherwise LRCLIB. Only fetched while the lyrics page is open.
+    pub fn load_track_lyrics(&self) {
+        if !self.config.borrow().config.lyrics.follow_playback || self.win().page() != "lyrics" {
+            return;
+        }
+        let track = self.playback.borrow().track.clone();
+        let Some(track) = track.filter(|t| t.kind != "episode" && !t.uri.is_empty()) else {
+            *self.lyrics_source.borrow_mut() = LyricsSource::None;
+            *self.lyrics_doc.borrow_mut() = None;
+            self.win().lyrics.show_document(None, "", Clock::Local(LyricClock::new(None)));
+            self.win().lyrics.view.set_message("nothing playing");
+            return;
+        };
+        let query = Self::track_query(&track);
+        let key = query.key();
+        if *self.lyrics_source.borrow() == LyricsSource::Track(key.clone()) {
+            return;
+        }
+        *self.lyrics_source.borrow_mut() = LyricsSource::Track(key.clone());
+        if let Some(found) = self.lyric_results.borrow().get(&key).cloned() {
+            return self.show_found(found, &key, &track);
+        }
+        self.win().lyrics.show_document(None, "", self.lyric_clock());
+        self.win().lyrics.view.set_message("searching lyrics…");
+        let http = self.http.clone();
         let app = self.clone();
-        let t = track.clone();
         glib::spawn_future_local(async move {
             let q = query.clone();
-            let found = gio::spawn_blocking(move || {
+            let local = gio::spawn_blocking(move || {
                 LocalFileProvider {
                     dirs: vec![paths::lyrics_dir()],
                 }
                 .lookup(&q)
             })
             .await;
-            let doc = match found {
-                Ok(Ok(d)) => d,
-                Ok(Err(e)) => {
-                    app.notice(&e.to_string(), true);
-                    None
+            let found = match local {
+                Ok(Ok(Some(doc))) => lrclib::Found::Lyrics(Box::new(doc)),
+                _ => {
+                    let (tx, rx) = async_channel::bounded(1);
+                    rt().spawn(async move {
+                        let _ = tx.send(lrclib::fetch(&http, &query).await).await;
+                    });
+                    match rx.recv().await {
+                        Ok(Ok(f)) => f,
+                        Ok(Err(e)) => {
+                            log::info!("lrclib: {e}");
+                            // Network errors are not cached, so reopening the page retries.
+                            if *app.lyrics_source.borrow() == LyricsSource::Track(key.clone()) {
+                                app.win().lyrics.view.set_message("lyrics service unreachable");
+                                *app.lyrics_source.borrow_mut() = LyricsSource::None;
+                            }
+                            return;
+                        }
+                        Err(_) => return,
+                    }
                 }
-                Err(_) => None,
             };
-            if let Some(d) = &doc {
-                app.lyric_cache.borrow_mut().insert(d.clone());
+            app.lyric_results.borrow_mut().insert(key.clone(), found.clone());
+            if *app.lyrics_source.borrow() == LyricsSource::Track(key.clone()) {
+                app.show_found(found, &key, &track);
             }
-            app.show_track_lyrics(doc, &query.key(), &t);
         });
     }
 
-    fn show_track_lyrics(&self, doc: Option<LyricDocument>, key: &str, track: &Track) {
+    fn show_found(&self, found: lrclib::Found, key: &str, track: &Track) {
         let label = format!("{} — {}", track.name, track.artist_names());
-        if doc.is_none() {
-            // Keep demo/file content if nothing matches; tell the user where files go.
-            self.win().lyrics.set_sync_status(&format!(
-                "sync: spotify · no file for this track in {}",
-                paths::lyrics_dir().display()
-            ));
-            return;
+        let source = LyricsSource::Track(key.to_owned());
+        match found {
+            lrclib::Found::Lyrics(doc) => self.show_lyrics(Some(*doc), source, &label, self.lyric_clock()),
+            lrclib::Found::Instrumental => {
+                self.show_lyrics(None, source, &label, self.lyric_clock());
+                self.win().lyrics.view.set_message("♪ instrumental");
+            }
+            lrclib::Found::Missing => {
+                self.show_lyrics(None, source, &label, self.lyric_clock());
+                self.win().lyrics.view.set_message("no lyrics found for this song");
+            }
         }
-        self.apply_lyrics_options();
-        let clock = Clock::External(self.playback.borrow().snapshot());
-        self.show_lyrics(doc, LyricsSource::Track(key.to_owned()), &label, clock);
+    }
+
+    /// Playback clock for synced lyrics, slightly ahead so lines light up as they are sung.
+    fn lyric_clock(&self) -> Clock {
+        let mut snap = self.playback.borrow().snapshot();
+        snap.position_ms += LYRIC_LEAD_MS;
+        Clock::External(snap)
     }
 
     fn update_lyric_clock(&self) {
         if matches!(*self.lyrics_source.borrow(), LyricsSource::Track(_)) {
-            let snap = self.playback.borrow().snapshot();
-            self.win().lyrics.view.set_clock(Clock::External(snap));
+            let clock = self.lyric_clock();
+            self.win().lyrics.view.set_clock(clock);
         }
     }
 
-    /// Called when the capability gate is toggled in preferences.
-    pub fn lyrics_gate_changed(&self) {
-        self.apply_lyrics_options();
-        let gate = self.config.borrow().config.lyrics.spotify_sync;
-        let track = self.playback.borrow().track.clone();
-        if gate {
-            if let Some(t) = track {
-                self.lookup_track_lyrics(&t);
-            }
-        } else if matches!(*self.lyrics_source.borrow(), LyricsSource::Track(_)) {
+    /// Called when "follow playback" is toggled.
+    pub fn lyrics_follow_changed(&self) {
+        *self.lyrics_source.borrow_mut() = LyricsSource::None;
+        if self.config.borrow().config.lyrics.follow_playback {
+            self.load_track_lyrics();
+        } else {
             self.open_demo_lyrics(0, false);
         }
     }
@@ -1523,15 +2093,23 @@ impl App {
         );
     }
 
-    /// Opt-in: translate the shown document if translation is enabled and a key is stored.
+    /// Opt-in: translate the shown document (Google like qtify, or DeepL with a stored key).
     pub fn translate_current_lyrics(&self) {
-        let (enabled, target) = {
+        let (enabled, target, provider) = {
             let l = &self.config.borrow().config.lyrics;
-            (l.translation_enabled, l.translation_language.clone())
+            (
+                l.translation_enabled,
+                l.translation_language.clone(),
+                l.translation_provider.clone(),
+            )
         };
         let Some(doc) = self.lyrics_doc.borrow().clone() else { return };
-        if !enabled || doc.translation.as_ref().is_some_and(|t| t.language.eq_ignore_ascii_case(&target)) || target.is_empty() {
+        if !enabled || target.is_empty() || doc.translation.as_ref().is_some_and(|t| t.language.eq_ignore_ascii_case(&target)) {
             return;
+        }
+        let cache_key = format!("{}|{target}|{provider}", doc.track_key);
+        if let Some(cached) = self.translations.borrow().get(&cache_key).cloned() {
+            return self.replace_lyrics_doc(cached);
         }
         let cached_key = self.deepl_key.borrow().clone();
         let http = self.http.clone();
@@ -1539,35 +2117,47 @@ impl App {
         let source = self.lyrics_source.borrow().clone();
         spawn_then(
             async move {
-                let key = match cached_key {
-                    Some(k) => k,
-                    None => tokens::load(tokens::DEEPL_KEY, "default")
-                        .await
-                        .ok()
-                        .flatten()
-                        .ok_or(translation::TranslationError::NoKey)?,
-                };
                 let mut doc = doc;
-                translation::translate(&http, &key, &mut doc, &target).await?;
-                Ok::<_, translation::TranslationError>((key, doc))
+                if provider == "deepl" {
+                    let key = match cached_key {
+                        Some(k) => k,
+                        None => tokens::load(tokens::DEEPL_KEY, "default")
+                            .await
+                            .ok()
+                            .flatten()
+                            .ok_or_else(|| "add a DeepL API key in settings".to_owned())?,
+                    };
+                    translation::translate(&http, &key, &mut doc, &target)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    return Ok((Some(key), doc));
+                }
+                let r = google::request(&http, &doc, &target).await?;
+                google::apply(&mut doc, &r, &target);
+                Ok::<_, String>((None, doc))
             },
             move |r| match r {
                 Ok((key, doc)) => {
-                    *app.deepl_key.borrow_mut() = Some(key);
-                    if *app.lyrics_source.borrow() != source {
-                        return;
+                    if key.is_some() {
+                        *app.deepl_key.borrow_mut() = key;
                     }
-                    let clock = app.win().lyrics.view.clock();
-                    app.win().lyrics.view.set_document(Some(doc.clone()));
-                    app.win().lyrics.view.set_clock(clock);
-                    app.win().lyrics.set_attribution(Some(&doc));
-                    *app.lyrics_doc.borrow_mut() = Some(doc);
+                    app.translations.borrow_mut().insert(cache_key, doc.clone());
+                    if *app.lyrics_source.borrow() == source {
+                        app.replace_lyrics_doc(doc);
+                    }
                 }
-                Err(translation::TranslationError::NoKey) => {
-                    app.win().lyrics.set_sync_status("translation: add a DeepL API key in settings");
-                }
-                Err(e) => app.notice(&e.to_string(), true),
+                Err(e) => app.win().lyrics.set_status(&format!("translation: {e}")),
             },
         );
+    }
+
+    /// Swap in an updated document (translation arrived) without disturbing the clock.
+    fn replace_lyrics_doc(&self, doc: LyricDocument) {
+        let w = self.win();
+        let clock = w.lyrics.view.clock();
+        w.lyrics.view.set_document(Some(doc.clone()));
+        w.lyrics.view.set_clock(clock);
+        w.lyrics.set_attribution(Some(&doc));
+        *self.lyrics_doc.borrow_mut() = Some(doc);
     }
 }

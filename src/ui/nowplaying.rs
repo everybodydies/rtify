@@ -25,6 +25,7 @@ impl NowPlayingPanel {
         cover.set_content_fit(gtk::ContentFit::Cover);
         cover.add_css_class("rt-cover");
         cover.set_can_shrink(true);
+        cover.set_size_request(300, 300);
         let frame = gtk::AspectFrame::new(0.5, 0.0, 1.0, false);
         frame.set_child(Some(&cover));
 

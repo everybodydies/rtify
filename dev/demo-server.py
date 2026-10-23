@@ -427,7 +427,11 @@ class Handler(BaseHTTPRequestHandler):
             elif re.match(r"/playlists/\w+/items$", p):
                 pid = p.split("/")[2]
                 if m == "POST":
-                    playlist_items[pid].extend(data.get("uris", []))
+                    pos = data.get("position")
+                    if isinstance(pos, int):
+                        playlist_items[pid][pos:pos] = data.get("uris", [])
+                    else:
+                        playlist_items[pid].extend(data.get("uris", []))
                 else:
                     gone = {i["uri"] for i in data.get("items", [])}
                     playlist_items[pid] = [x for x in playlist_items[pid] if x not in gone]

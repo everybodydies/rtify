@@ -36,6 +36,8 @@ pub struct AccountSession {
     pub repeat: Option<String>,
     pub device_id: Option<String>,
     pub device_name: Option<String>,
+    /// Target of "add to last playlist".
+    pub last_playlist: Option<String>,
     pub updated_at: u64,
 }
 
