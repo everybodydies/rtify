@@ -15,38 +15,38 @@ pub struct Cli {
     /// Start (or keep running) without showing the window.
     #[arg(long, alias = "hidden")]
     pub background: bool,
-    #[arg(long)]
+    #[arg(long, help = Command::ToggleWindow.description())]
     pub toggle_window: bool,
-    #[arg(long)]
+    #[arg(long, help = Command::ShowWindow.description())]
     pub show: bool,
-    #[arg(long)]
+    #[arg(long, help = Command::HideWindow.description())]
     pub hide: bool,
-    #[arg(long)]
+    #[arg(long, help = Command::ToggleLyrics.description())]
     pub toggle_lyrics: bool,
-    #[arg(long)]
+    #[arg(long, help = Command::PlayPause.description())]
     pub play_pause: bool,
-    #[arg(long)]
+    #[arg(long, help = Command::Next.description())]
     pub next: bool,
-    #[arg(long)]
+    #[arg(long, help = Command::Previous.description())]
     pub previous: bool,
-    #[arg(long)]
+    #[arg(long, help = Command::ToggleShuffle.description())]
     pub toggle_shuffle: bool,
-    #[arg(long)]
+    #[arg(long, help = Command::CycleRepeat.description())]
     pub cycle_repeat: bool,
-    #[arg(long)]
+    #[arg(long, help = Command::VolumeUp.description())]
     pub volume_up: bool,
-    #[arg(long)]
+    #[arg(long, help = Command::VolumeDown.description())]
     pub volume_down: bool,
-    #[arg(long)]
+    #[arg(long, help = Command::FocusSearch.description())]
     pub focus_search: bool,
-    #[arg(long)]
+    #[arg(long, help = Command::ToggleCompact.description())]
     pub toggle_compact: bool,
     /// Re-read the Noctalia palette (use as the template's post_hook).
     #[arg(long)]
     pub reload_theme: bool,
-    #[arg(long)]
+    #[arg(long, help = Command::Preferences.description())]
     pub preferences: bool,
-    #[arg(long)]
+    #[arg(long, help = Command::Quit.description())]
     pub quit: bool,
     /// Print Hyprland key bindings for the configured shortcuts and exit (`lua` or `conf`).
     #[arg(long, value_name = "SYNTAX")]

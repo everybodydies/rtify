@@ -2,9 +2,20 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Spotify sends explicit `null` for some fields (local files have no album or artist uri);
+/// `#[serde(default)]` only covers missing ones.
+fn null_as_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Image {
+    #[serde(deserialize_with = "null_as_default")]
     pub url: String,
     pub width: Option<u32>,
     pub height: Option<u32>,
@@ -21,7 +32,9 @@ pub fn pick_image(images: &[Image], min: u32) -> Option<&Image> {
 #[serde(default)]
 pub struct ArtistRef {
     pub id: Option<String>,
+    #[serde(deserialize_with = "null_as_default")]
     pub uri: String,
+    #[serde(deserialize_with = "null_as_default")]
     pub name: String,
 }
 
@@ -29,9 +42,13 @@ pub struct ArtistRef {
 #[serde(default)]
 pub struct AlbumRef {
     pub id: Option<String>,
+    #[serde(deserialize_with = "null_as_default")]
     pub uri: String,
+    #[serde(deserialize_with = "null_as_default")]
     pub name: String,
+    #[serde(deserialize_with = "null_as_default")]
     pub images: Vec<Image>,
+    #[serde(deserialize_with = "null_as_default")]
     pub artists: Vec<ArtistRef>,
 }
 
@@ -40,14 +57,19 @@ pub struct AlbumRef {
 #[serde(default)]
 pub struct Track {
     pub id: Option<String>,
+    #[serde(deserialize_with = "null_as_default")]
     pub uri: String,
+    #[serde(deserialize_with = "null_as_default")]
     pub name: String,
     pub duration_ms: u64,
+    #[serde(deserialize_with = "null_as_default")]
     pub artists: Vec<ArtistRef>,
     pub album: Option<AlbumRef>,
     pub show: Option<AlbumRef>,
+    #[serde(deserialize_with = "null_as_default")]
     pub images: Vec<Image>,
     #[serde(rename = "type")]
+    #[serde(deserialize_with = "null_as_default")]
     pub kind: String,
     pub is_local: bool,
 }
@@ -77,8 +99,10 @@ impl Track {
 #[serde(default)]
 pub struct Device {
     pub id: Option<String>,
+    #[serde(deserialize_with = "null_as_default")]
     pub name: String,
     #[serde(rename = "type")]
+    #[serde(deserialize_with = "null_as_default")]
     pub kind: String,
     pub is_active: bool,
     pub is_restricted: bool,
@@ -90,7 +114,9 @@ pub struct Device {
 #[serde(default)]
 pub struct Context {
     #[serde(rename = "type")]
+    #[serde(deserialize_with = "null_as_default")]
     pub kind: String,
+    #[serde(deserialize_with = "null_as_default")]
     pub uri: String,
 }
 
@@ -99,11 +125,13 @@ pub struct Context {
 pub struct PlayerState {
     pub device: Option<Device>,
     pub shuffle_state: bool,
+    #[serde(deserialize_with = "null_as_default")]
     pub repeat_state: String,
     pub progress_ms: Option<u64>,
     pub is_playing: bool,
     pub item: Option<Track>,
     pub context: Option<Context>,
+    #[serde(deserialize_with = "null_as_default")]
     pub currently_playing_type: String,
 }
 
@@ -120,6 +148,7 @@ pub struct Page<T> {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Owner {
+    #[serde(deserialize_with = "null_as_default")]
     pub id: String,
     pub display_name: Option<String>,
 }
@@ -133,8 +162,11 @@ pub struct Total {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Playlist {
+    #[serde(deserialize_with = "null_as_default")]
     pub id: String,
+    #[serde(deserialize_with = "null_as_default")]
     pub uri: String,
+    #[serde(deserialize_with = "null_as_default")]
     pub name: String,
     pub description: Option<String>,
     pub owner: Owner,
@@ -154,21 +186,32 @@ impl Playlist {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Album {
+    #[serde(deserialize_with = "null_as_default")]
     pub id: String,
+    #[serde(deserialize_with = "null_as_default")]
     pub uri: String,
+    #[serde(deserialize_with = "null_as_default")]
     pub name: String,
+    #[serde(deserialize_with = "null_as_default")]
     pub images: Vec<Image>,
+    #[serde(deserialize_with = "null_as_default")]
     pub artists: Vec<ArtistRef>,
+    #[serde(deserialize_with = "null_as_default")]
     pub release_date: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Artist {
+    #[serde(deserialize_with = "null_as_default")]
     pub id: String,
+    #[serde(deserialize_with = "null_as_default")]
     pub uri: String,
+    #[serde(deserialize_with = "null_as_default")]
     pub name: String,
+    #[serde(deserialize_with = "null_as_default")]
     pub images: Vec<Image>,
+    #[serde(deserialize_with = "null_as_default")]
     pub genres: Vec<String>,
 }
 
@@ -207,14 +250,14 @@ impl<T> Default for CursorPage<T> {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct SavedAlbum {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub added_at: String,
     pub album: Album,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct SavedTrack {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub added_at: String,
     pub track: Track,
 }
@@ -222,7 +265,7 @@ pub struct SavedTrack {
 /// Playlist entries: the current API calls the payload `item`, older responses `track`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct PlaylistItem {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub added_at: String,
     #[serde(alias = "track")]
     pub item: Option<Track>,
@@ -231,6 +274,7 @@ pub struct PlaylistItem {
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Devices {
+    #[serde(deserialize_with = "null_as_default")]
     pub devices: Vec<Device>,
 }
 
@@ -238,12 +282,14 @@ pub struct Devices {
 #[serde(default)]
 pub struct Queue {
     pub currently_playing: Option<Track>,
+    #[serde(deserialize_with = "null_as_default")]
     pub queue: Vec<Track>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Me {
+    #[serde(deserialize_with = "null_as_default")]
     pub id: String,
     pub display_name: Option<String>,
     pub product: Option<String>,
@@ -303,6 +349,18 @@ mod tests {
         assert_eq!(pick_image(&imgs, 200).unwrap().url, "mid");
         assert_eq!(pick_image(&imgs, 1000).unwrap().url, "big");
         assert!(pick_image(&[], 10).is_none());
+    }
+
+    #[test]
+    fn local_files_with_null_refs_parse() {
+        let item: PlaylistItem = serde_json::from_str(
+            r#"{"added_at":"x","track":{"uri":"spotify:local:a:b:c:1","id":null,"name":"c","is_local":true,
+                "album":{"uri":null,"id":null,"name":"b","images":[]},
+                "artists":[{"uri":null,"id":null,"href":null,"name":"a"}]}}"#,
+        )
+        .unwrap();
+        let t = item.item.unwrap();
+        assert_eq!((t.artist_names().as_str(), t.album_name()), ("a", "b"));
     }
 
     #[test]
