@@ -31,9 +31,11 @@ dev/ui-test.sh OUT --update-references  # accept the current look
 - **click-all**: every visible button and every row-menu entry is clicked; rtify must not exit,
   and the log must stay free of GTK criticals, GTK warnings and panics.
 
-After an intended UI change, look at the new pictures in `OUT/`, then run with
-`--update-references` and commit `tests/ui/reference/`. The references come from Ubuntu 24.04
-(GTK 4.14) with the Cairo renderer, as in CI; other systems render fonts slightly differently.
+The references are the pictures CI takes (GitHub's Ubuntu 24.04 runner, GTK 4.14, Cairo
+renderer). Font smoothing differs between machines by about 2 % of the pixels, so a local run can
+fail the comparison while CI passes; loosen it locally with `RTIFY_UI_MAX_DIFF=0.04`. After an
+intended UI change, CI fails the comparison and uploads the new pictures as the `ui-test`
+artifact: look at them, copy the ones you accept into `tests/ui/reference/` and commit them.
 
 Needs: Xvfb, xdotool, xprop (x11-utils), ImageMagick, playerctl, at-spi2-core and PyGObject with
 Atspi (`python3-gi gir1.2-atspi-2.0`). If your default `python3` lacks PyGObject (pyenv, uv), point
