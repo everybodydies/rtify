@@ -59,12 +59,28 @@ follows the palette source (fixed, Noctalia or album art). The typeface, DM Mono
 
 ## Install
 
-The easiest way is the ready-made package from
-[Releases](https://github.com/everybodydies/rtify/releases):
+Every [release](https://github.com/everybodydies/rtify/releases) carries a ready-made pacman
+package, a pacman repository and `SHA256SUMS`. The easiest way is to add the repository, so
+`pacman -Syu` brings new versions along. Append to `/etc/pacman.conf`:
+
+```ini
+[rtify]
+SigLevel = Optional TrustAll
+Server = https://github.com/everybodydies/rtify/releases/latest/download
+```
 
 ```sh
+sudo pacman -Sy rtify
+```
+
+Or install one downloaded package by hand:
+
+```sh
+sha256sum -c SHA256SUMS --ignore-missing
 sudo pacman -U rtify-0.1.0-1-x86_64.pkg.tar.zst
 ```
+
+The packages are not signed, which is why the entry says `SigLevel = Optional TrustAll`.
 
 To build the same package yourself (in a clean Arch container, with a smoke test):
 
@@ -264,6 +280,14 @@ src/
 `cargo test` covers the parsers, romanizers, timing, persistence/migrations, contrast, polling,
 reconnect rules, CLI and auth (including the RFC 7636 PKCE vector). CI also runs the app against the
 mock API under Xvfb and uploads screenshots.
+
+## Releasing
+
+Releases build themselves. Bump `version` in `Cargo.toml` (and `Cargo.lock`), turn
+`## [Unreleased]` in `CHANGELOG.md` into `## [x.y.z] - YYYY-MM-DD`, and merge to `main`: the
+Release workflow sees a version without a tag, builds and smoke-tests the package in Arch, and
+publishes `vx.y.z` with the package, `rtify.db` / `rtify.files` and `SHA256SUMS`. Pushing a tag
+`vx.y.z` by hand does the same; *Actions → Release → Run workflow* rebuilds an existing tag.
 
 ## License
 
