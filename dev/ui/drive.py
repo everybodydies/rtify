@@ -410,6 +410,11 @@ class Run:
             for name in menu_items:
                 if not self.alive() or SKIP.search(name):
                     continue
+                # The previous entry may have navigated away ("go to album").
+                close_other_windows(self.app, self.frame)
+                self.open_library_tab("playlists")
+                click_center(wait(lambda: first(self.frame, role="list item", name="Coding Nights"), 5, "Coding Nights"))
+                settle(1)
                 popover = self.open_row_menu(2)
                 item = first(popover or self.app, role=re.compile("push button|menu item"), name=name)
                 if item is None:
