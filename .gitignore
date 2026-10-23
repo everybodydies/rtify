@@ -2,4 +2,5 @@
 /screenshots
 /dist
 /ui-test
+/ui-test-wayland*
 __pycache__/

@@ -27,13 +27,47 @@ jobs:
           path: screenshots/
       - name: Packaging checks (desktop entry, AppStream, CLI help, versions)
         run: dev/check-packaging.sh
-      - name: UI checks (geometry, screen reader names, screenshots, scroll, MPRIS, click-through)
+
+  ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - run: >-
+          sudo apt-get update && sudo apt-get install -y libgtk-4-dev libdbus-1-dev xvfb imagemagick fonts-noto-cjk
+          xdotool x11-utils playerctl at-spi2-core python3-gi gir1.2-atspi-2.0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: UI checks on X11 (see tests/README.md)
         run: dev/ui-test.sh ui-test
       - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ui-test
           path: ui-test/
+
+  ui-wayland:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - run: >-
+          sudo apt-get update && sudo apt-get install -y libgtk-4-dev libdbus-1-dev imagemagick fonts-noto-cjk
+          sway grim wtype playerctl at-spi2-core python3-gi gir1.2-atspi-2.0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: UI checks on Wayland at 1.5x
+        run: dev/ui-test-wayland.sh ui-test-wayland
+      - name: Screenshots on Wayland at 2x
+        if: always()
+        run: RTIFY_UI_SCALE=2 dev/ui-test-wayland.sh ui-test-wayland-2x --only a11y-names,screenshots,keyboard
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-wayland
+          path: |
+            ui-test-wayland/
+            ui-test-wayland-2x/
 
   arch-package:
     runs-on: ubuntu-latest
