@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 everybodydies -->
+<component type="desktop-application">
+  <id>io.github.everybodydies.rtify</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>rtify</name>
+  <summary>Spotify Connect companion with a terminal look</summary>
+  <developer id="io.github.everybodydies">
+    <name>everybodydies</name>
+  </developer>
+  <description>
+    <p>
+      rtify controls Spotify Connect devices from the Linux desktop. It browses your library,
+      playlists, albums and artists, edits playlists, and shows synced lyrics from LRCLIB.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>System24 look for OLED screens: true black, framed panels, one pastel accent</li>
+      <li>Synced and word-timed lyrics with romanization for Japanese, Korean, Chinese and Cyrillic</li>
+      <li>Tray icon, global shortcuts and MPRIS media controls</li>
+      <li>Accent colors from the album cover or a Noctalia template</li>
+    </ul>
+    <p>rtify needs a Spotify Premium account and plays through another Spotify Connect device.</p>
+  </description>
+  <launchable type="desktop-id">io.github.everybodydies.rtify.desktop</launchable>
+  <provides>
+    <binary>rtify</binary>
+  </provides>
+  <url type="homepage">https://github.com/everybodydies/rtify</url>
+  <url type="bugtracker">https://github.com/everybodydies/rtify/issues</url>
+  <url type="vcs-browser">https://github.com/everybodydies/rtify</url>
+  <categories>
+    <category>Audio</category>
+    <category>AudioVideo</category>
+    <category>Player</category>
+  </categories>
+  <keywords>
+    <keyword>spotify</keyword>
+    <keyword>music</keyword>
+    <keyword>lyrics</keyword>
+  </keywords>
+  <branding>
+    <color type="primary" scheme_preference="light">#b589d6</color>
+    <color type="primary" scheme_preference="dark">#000000</color>
+  </branding>
+  <requires>
+    <display_length compare="ge">1015</display_length>
+  </requires>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-10-22">
+      <description>
+        <p>First release.</p>
+      </description>
+    </release>
+  </releases>
+</component>

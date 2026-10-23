@@ -9,7 +9,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libdbus-1-dev xvfb imagemagick fonts-noto-cjk
+      - run: >-
+          sudo apt-get update && sudo apt-get install -y libgtk-4-dev libdbus-1-dev xvfb imagemagick fonts-noto-cjk
+          xdotool x11-utils playerctl at-spi2-core python3-gi gir1.2-atspi-2.0 desktop-file-utils appstream
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -23,6 +25,15 @@ jobs:
         with:
           name: screenshots
           path: screenshots/
+      - name: Packaging checks (desktop entry, AppStream, CLI help, versions)
+        run: dev/check-packaging.sh
+      - name: UI checks (geometry, screen reader names, screenshots, scroll, MPRIS, click-through)
+        run: dev/ui-test.sh ui-test
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test
+          path: ui-test/
 
   arch-package:
     runs-on: ubuntu-latest
