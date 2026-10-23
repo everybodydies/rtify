@@ -1,7 +1,7 @@
 //! Right-click menus: a plain popover with flat rows, one level of submenu ("add to playlist ▸")
-//! shown in place, and Escape/back to return. Opens at the pointer.
+//! swapped in place, and Escape/back to return. Opens at the pointer.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk::{gdk, prelude::*};
@@ -13,8 +13,9 @@ use super::widgets::*;
 /// which crashed during drag-and-drop).
 pub struct Menu {
     popover: Rc<RefCell<Option<gtk::Popover>>>,
-    stack: gtk::Stack,
     main: gtk::Box,
+    /// Set while a page switch closes and reopens the popover.
+    switching: Rc<Cell<bool>>,
 }
 
 fn popdown(p: &Rc<RefCell<Option<gtk::Popover>>>) {
@@ -43,6 +44,19 @@ fn popover_for(parent: &gtk::Widget) -> gtk::Popover {
     p
 }
 
+/// Show `page` in the open popover. Pages are swapped rather than kept in a `gtk::Stack`, so the
+/// popover takes each page's own size (with a stack it kept the main page's height).
+fn show_page(popover: &Rc<RefCell<Option<gtk::Popover>>>, switching: &Cell<bool>, page: &gtk::Box) {
+    if let Some(p) = popover.borrow().as_ref() {
+        // A mapped popover only ever grows; reopening it lets it shrink to the new page.
+        switching.set(true);
+        p.popdown();
+        p.set_child(Some(page));
+        p.popup();
+        switching.set(false);
+    }
+}
+
 fn item_button(text: &str) -> gtk::Button {
     let l = label(text, &[]);
     l.set_xalign(0.0);
@@ -54,16 +68,10 @@ fn item_button(text: &str) -> gtk::Button {
 
 impl Menu {
     pub fn new() -> Self {
-        let main = vbox(0);
-        let stack = gtk::Stack::new();
-        stack.set_vhomogeneous(false);
-        stack.set_hhomogeneous(false);
-        stack.set_interpolate_size(true);
-        stack.add_named(&main, Some("main"));
         Self {
             popover: Rc::default(),
-            stack,
-            main,
+            main: vbox(0),
+            switching: Rc::default(),
         }
     }
 
@@ -126,13 +134,11 @@ impl Menu {
             .max_content_height(360)
             .build();
         page.append(&scroll);
-        let name = format!("sub{}", self.stack.pages().n_items());
-        self.stack.add_named(&page, Some(&name));
-        let stack = self.stack.clone();
-        back.connect_clicked(move |_| stack.set_visible_child_name("main"));
+        let (main, pop, sw) = (self.main.clone(), self.popover.clone(), self.switching.clone());
+        back.connect_clicked(move |_| show_page(&pop, &sw, &main));
         let opener = item_button(&format!("{text}  ▸"));
-        let stack = self.stack.clone();
-        opener.connect_clicked(move |_| stack.set_visible_child_name(&name));
+        let (pop, sw) = (self.popover.clone(), self.switching.clone());
+        opener.connect_clicked(move |_| show_page(&pop, &sw, &page));
         self.main.append(&opener);
         self
     }
@@ -141,6 +147,22 @@ impl Menu {
     /// The popover lives on the nearest ancestor marked `rt-menu-host` (a widget that is never
     /// rebuilt), so rows and cards can be replaced while a menu is open.
     pub fn popup_at(self, parent: &impl IsA<gtk::Widget>, x: f64, y: f64) {
+        // The clicked row or card, which gets focus back when the menu closes.
+        let clicked = parent.as_ref();
+        let row = if let Some(list) = clicked.downcast_ref::<gtk::ListBox>() {
+            list.row_at_y(y as i32).map(|r| r.upcast())
+        } else if let Some(flow) = clicked.downcast_ref::<gtk::FlowBox>() {
+            flow.child_at_pos(x as i32, y as i32).map(|c| c.upcast())
+        } else {
+            let mut w = Some(clicked.clone());
+            while let Some(c) = &w {
+                if c.is::<gtk::ListBoxRow>() || c.is::<gtk::FlowBoxChild>() {
+                    break;
+                }
+                w = c.parent();
+            }
+            w
+        };
         let mut host = parent.as_ref().clone();
         while !host.has_css_class("rt-menu-host") {
             match host.parent() {
@@ -158,11 +180,35 @@ impl Menu {
             .unwrap_or((x, y));
         let parent = &host;
         let popover = popover_for(parent);
-        popover.set_child(Some(&self.stack));
+        popover.set_child(Some(&self.main));
         popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
         *self.popover.borrow_mut() = Some(popover.clone());
+        if let Some(row) = row {
+            refocus_on_close(&popover, row, self.switching.clone());
+        }
         popover.popup();
     }
+}
+
+/// When a popover closes, GTK moves focus to its parent: the whole list, which then scrolls to its
+/// end. Hand focus to the clicked row instead (once; the popover is reused).
+fn refocus_on_close(popover: &gtk::Popover, row: gtk::Widget, switching: Rc<Cell<bool>>) {
+    let handler: Rc<RefCell<Option<gtk::glib::SignalHandlerId>>> = Rc::default();
+    let h = handler.clone();
+    *handler.borrow_mut() = Some(popover.connect_closed(move |p| {
+        if switching.get() {
+            return;
+        }
+        if let Some(id) = h.borrow_mut().take() {
+            p.disconnect(id);
+        }
+        let row = row.clone();
+        gtk::glib::idle_add_local_once(move || {
+            if row.root().is_some() {
+                row.grab_focus();
+            }
+        });
+    }));
 }
 
 impl Default for Menu {
