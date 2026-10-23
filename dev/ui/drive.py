@@ -184,6 +184,10 @@ class Run:
         devices = first(self.frame, role="toggle button", name=re.compile("devices|qtify", re.I))
         if devices:
             do_click(devices)
+            settle(1)
+            # Whether the first row already shows focus depends on timing; put it there.
+            key("Down")
+            key("Up")
             shot("devices")
             key("Escape")
         else:
