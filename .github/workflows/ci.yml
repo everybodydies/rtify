@@ -45,6 +45,15 @@ jobs:
         run: |
           sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
           OUT="$GITHUB_WORKSPACE/dist" bash packaging/arch/build.sh
+      - name: Install from the pacman repository a release would publish
+        run: |
+          bash packaging/arch/repo.sh dist
+          (cd dist && sha256sum -c SHA256SUMS)
+          pacman -R --noconfirm rtify
+          printf '\n[rtify]\nSigLevel = Optional TrustAll\nServer = file://%s/dist\n' "$GITHUB_WORKSPACE" >> /etc/pacman.conf
+          pacman -Sy --noconfirm rtify
+          pacman -Qi rtify
+          rtify --version
       - uses: actions/upload-artifact@v4
         with:
           name: rtify-arch-package
