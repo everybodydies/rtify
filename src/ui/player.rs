@@ -111,6 +111,8 @@ impl PlayerBar {
         let panel_toggle = icon_toggle("▤", "Now playing panel");
         let devices = gtk::ListBox::new();
         devices.add_css_class("rt-list");
+        // ◉ marks the active device; a selected row would only mark whichever row got focus first.
+        devices.set_selection_mode(gtk::SelectionMode::None);
         let dev_box = vbox(6);
         dev_box.set_size_request(280, -1);
         dev_box.append(&label("connect to a device", &["rt-section"]));

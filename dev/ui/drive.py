@@ -142,6 +142,12 @@ class Run:
                 problems.add(f"{role} named {name!r}{hint}")
         self.check("a11y-names", sorted(problems))
 
+    def device_row(self, index):
+        """A row of the device popover: a list item with a "… · vol N%" line."""
+        rows = [o for o in walk(self.frame) if o.get_role_name() == "list item" and showing(o)
+                and any(" · vol " in (c.get_name() or "") for c in walk(o))]
+        return rows[index] if index < len(rows) else None
+
     def screenshots(self):
         shots = []
         missing = []
@@ -183,11 +189,10 @@ class Run:
         settle(1.5)
         devices = first(self.frame, role="toggle button", name=re.compile("devices|qtify", re.I))
         if devices:
-            do_click(devices)
-            settle(1)
-            # Whether the first row already shows focus depends on timing; put it there.
-            key("Down")
-            key("Up")
+            # A real click: it also turns keyboard focus rings off, which otherwise land on
+            # the back button or the first device depending on timing.
+            click_center(devices)
+            wait(lambda: self.device_row(0), 5, "first device row")
             shot("devices")
             key("Escape")
         else:
