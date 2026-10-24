@@ -143,7 +143,7 @@ impl PlayerBar {
         let device_label = label("no device", &["rt-pbtn-value"]);
         device_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         device_label.set_max_width_chars(14);
-        device_label.set_width_chars(10);
+        device_label.set_width_chars(6);
         let device_box = hbox(6);
         device_box.append(&label("out", &[]));
         device_box.append(&device_label);
@@ -156,7 +156,7 @@ impl PlayerBar {
         named(&devices_button, "Spotify Connect devices");
         let volume = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 5.0);
         volume.set_draw_value(false);
-        volume.set_size_request(110, -1);
+        volume.set_size_request(80, -1);
         volume.set_tooltip_text(Some("Volume"));
         // Wheel over the volume bar: exactly 5 % per notch (GtkRange's own scroll step is far
         // larger on many mice and touchpads).

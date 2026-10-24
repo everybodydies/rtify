@@ -1433,10 +1433,22 @@ def matches(pattern, text):
     return text == pattern
 
 
+def walk_showing(o, depth=0):
+    """Like walk, but skips hidden subtrees (nothing under a hidden widget is showing). Hidden
+    pages such as the long settings view would otherwise make every lookup slow enough to
+    miss a 2 s toast."""
+    if o is None or depth > 60:
+        return
+    yield o
+    for c in children(o):
+        if c is not None and showing(c):
+            yield from walk_showing(c, depth + 1)
+
+
 def first(root, role=None, name=None, deep=True):
     if root is None:
         return None
-    nodes = walk(root) if deep else iter(children(root))
+    nodes = walk_showing(root) if deep else iter(children(root))
     for o in nodes:
         try:
             if o is not root and matches(role, o.get_role_name()) and matches(name, o.get_name()) and showing(o):
