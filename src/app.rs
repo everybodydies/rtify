@@ -22,12 +22,12 @@ use crate::lyrics::provider::demo;
 use crate::lyrics::synchronization::LyricClock;
 use crate::lyrics::{LyricDocument, google, lrclib, romanization, translation};
 use crate::paths::{self, APP_ID};
-use crate::persistence::{ConfigStore, SessionStore};
+use crate::persistence::{AccountSession, ConfigStore, LastTrack, SessionStore};
 use crate::player::{self, Status as BuiltinStatus};
 use crate::runtime::{self, rt, spawn_then};
 use crate::services::artwork::Artwork;
 use crate::services::history::History;
-use crate::services::playback::{Playback, ReconnectStep, Repeat, reconnect_plan};
+use crate::services::playback::{Playback, ReconnectStep, Repeat, reconnect_plan, restore_plan, still_queued, track_of};
 use crate::services::polling::{PollInputs, next_poll};
 use crate::services::undo::{self, UndoStack};
 use crate::spotify::model::{Device, Track, pick_image};
@@ -305,6 +305,8 @@ impl App {
                 app.load_cover(&url);
             }
             *app.playback.borrow_mut() = pb;
+            let queued: Vec<Track> = s.queue.iter().map(track_of).collect();
+            app.win().now_playing.set_queue(&queued, None);
             if !s.page.is_empty() {
                 app.win().show_page(&s.page);
                 if s.page == "lyrics" {
@@ -1043,14 +1045,22 @@ impl App {
     }
 
     fn apply_state(&self, pb: Playback) {
+        // Spotify has nothing active (its session ended, or nothing played since): keep showing
+        // the remembered track, paused where it was, so play continues it.
+        let pb = match self.saved().filter(|s| s.last_track.is_some()) {
+            Some(s) if pb.track.is_none() && pb.device.is_none() => Playback::from_session(&s),
+            _ => pb,
+        };
         let old_uri = self.playback.borrow().track_uri().map(String::from);
         let was_stale = self.playback.borrow().stale;
         let new_uri = pb.track_uri().map(String::from);
-        let changed = old_uri != new_uri || was_stale;
+        let changed = old_uri != new_uri || (was_stale && !pb.stale);
         *self.playback.borrow_mut() = pb.clone();
         if changed {
             self.saved_current.set(None);
             self.track_changed(&pb, was_stale);
+        } else if pb.stale && !was_stale {
+            self.refresh_queue();
         }
         self.refresh_player_ui();
         self.win().collection.mark_playing(new_uri.as_deref());
@@ -1142,17 +1152,24 @@ impl App {
         }
     }
 
+    /// The remembered session of the signed-in account.
+    fn saved(&self) -> Option<AccountSession> {
+        let account = self.account.borrow().clone()?;
+        self.session.borrow().data.accounts.get(&account).cloned()
+    }
+
     fn reconcile(&self) {
         let (restore, resume) = {
             let p = &self.config.borrow().config.playback;
             (p.restore_shuffle_repeat, p.resume_on_startup)
         };
-        let saved = self
-            .account
-            .borrow()
-            .as_ref()
-            .and_then(|a| self.session.borrow().data.accounts.get(a).cloned());
+        let saved = self.saved();
         let plan = reconnect_plan(restore, resume, saved.as_ref(), &self.playback.borrow(), &self.devices.borrow());
+        self.run_steps(plan);
+    }
+
+    /// Apply restore steps one at a time: Spotify does not order concurrent playback commands.
+    fn run_steps(&self, plan: Vec<ReconnectStep>) {
         if plan.is_empty() {
             return;
         }
@@ -1160,16 +1177,34 @@ impl App {
         let app = self.clone();
         spawn_then(
             async move {
-                // One at a time: Spotify does not order concurrent playback commands.
                 for step in plan {
                     let r = match &step {
-                        ReconnectStep::Resume { context, track, device } => {
-                            client
-                                .play(Some(&PlayRequest::context(context, track.as_deref())), device.as_deref())
-                                .await
+                        ReconnectStep::Resume {
+                            context,
+                            track,
+                            position_ms,
+                            device,
+                        } => {
+                            let mut req = match context {
+                                Some(c) => PlayRequest::context(c, Some(track)),
+                                None => PlayRequest::tracks(vec![track.clone()], 0),
+                            };
+                            req.position_ms = Some(*position_ms).filter(|p| *p > 0);
+                            client.play(Some(&req), Some(device)).await
                         }
                         ReconnectStep::SetShuffle(on) => client.shuffle(*on, None).await,
                         ReconnectStep::SetRepeat(r) => client.repeat(r.as_str(), None).await,
+                        ReconnectStep::SetVolume(v) => client.volume(*v).await,
+                        ReconnectStep::Queue(uris) => {
+                            let mut r = Ok(());
+                            for u in uris {
+                                r = client.add_to_queue(u).await;
+                                if r.is_err() {
+                                    break;
+                                }
+                            }
+                            r
+                        }
                     };
                     if let Err(e) = r {
                         return Err(format!("could not restore {step:?}: {e}"));
@@ -1236,16 +1271,23 @@ impl App {
             return self.simple(|c| async move { c.play(None, None).await });
         }
         // Nothing active: wake the last-used device (or the first one) explicitly.
-        let saved = self
-            .account
-            .borrow()
-            .as_ref()
-            .and_then(|a| self.session.borrow().data.accounts.get(a).and_then(|s| s.device_id.clone()));
+        let saved = self.saved();
         let devices = self.devices.borrow().clone();
         let target = saved
+            .as_ref()
+            .and_then(|s| s.device_id.clone())
             .filter(|id| devices.iter().any(|d| d.id.as_deref() == Some(id)))
             .or_else(|| devices.iter().find(|d| self.is_builtin_device(d)).and_then(|d| d.id.clone()))
             .or_else(|| devices.first().and_then(|d| d.id.clone()));
+        // While the remembered session shows, continue exactly that.
+        let restore = saved
+            .filter(|s| s.last_track.is_some() && self.playback.borrow().stale)
+            .zip(target.clone());
+        if let Some((s, id)) = restore {
+            self.playback.borrow_mut().playing = true;
+            self.refresh_player_ui();
+            return self.run_steps(restore_plan(&s, &id));
+        }
         match target {
             Some(id) => self.simple(move |c| async move { c.transfer(&id, true).await }),
             None if self.builtin_wanted() => self.notice(
@@ -1259,12 +1301,23 @@ impl App {
     pub fn player(&self, op: PlayerOp) {
         match op {
             PlayerOp::Seek(ms) => {
-                {
+                let restored = {
                     let mut pb = self.playback.borrow_mut();
                     pb.progress_ms = ms;
                     pb.fetched_at = Some(std::time::Instant::now());
-                }
+                    pb.stale
+                };
                 self.update_lyric_clock();
+                if restored {
+                    // Nothing active to seek: play starts from here instead.
+                    if let Some(account) = self.account.borrow().clone()
+                        && let Some(t) = self.session.borrow_mut().account_mut(&account).last_track.as_mut()
+                    {
+                        t.position_ms = ms;
+                    }
+                    self.schedule_session_save();
+                    return;
+                }
                 self.simple(move |c| async move { c.seek(ms).await });
             }
             PlayerOp::SetVolume(v) => {
@@ -2013,10 +2066,30 @@ impl App {
     }
 
     fn refresh_queue(&self) {
+        if self.playback.borrow().stale {
+            // Nothing active: the songs that were still queued come back on play.
+            let queued: Vec<Track> = self.saved().map(|s| s.queue.iter().map(track_of).collect()).unwrap_or_default();
+            self.win().now_playing.set_queue(&queued, None);
+            return;
+        }
         let client = self.client();
         let app = self.clone();
         spawn_then(async move { client.queue().await }, move |r| match r {
             Ok(q) => {
+                // Forget the songs queued from rtify once Spotify played them; keep the rest for
+                // the next start (unless what came back is already the remembered state again).
+                if !app.playback.borrow().stale
+                    && let Some(account) = app.account.borrow().clone()
+                {
+                    let mut session = app.session.borrow_mut();
+                    let entry = session.account_mut(&account);
+                    let kept = still_queued(&entry.queue, &q);
+                    if kept != entry.queue {
+                        entry.queue = kept;
+                        drop(session);
+                        app.schedule_session_save();
+                    }
+                }
                 let from = app
                     .playback
                     .borrow()
@@ -2100,6 +2173,7 @@ impl App {
 
     pub fn queue_uris(&self, uris: Vec<String>) {
         let n = uris.len();
+        let queued = uris.clone();
         let client = self.client();
         let app = self.clone();
         spawn_then(
@@ -2112,6 +2186,14 @@ impl App {
             },
             move |r| match r {
                 Ok(()) => {
+                    if let Some(account) = app.account.borrow().clone() {
+                        let mut session = app.session.borrow_mut();
+                        session.account_mut(&account).queue.extend(queued.iter().map(|u| LastTrack {
+                            uri: u.clone(),
+                            ..Default::default()
+                        }));
+                    }
+                    app.schedule_session_save();
                     app.toast(
                         &if n == 1 {
                             "added to queue".to_owned()

@@ -198,7 +198,15 @@ rtify --background            # start without a window (what autostart uses)
 ```
 
 Starting rtify never starts audio by itself. It reconnects, shows the last-known track until
-Spotify answers, and then shows what is actually playing.
+Spotify answers, and then shows what is actually playing. When Spotify has nothing active any
+more (its session ended), rtify keeps showing the last track paused where it was, with the songs
+you queued from rtify that had not played yet; play continues exactly there (same playlist or
+album, position, shuffle, repeat and volume, on the device that played last) and queues those
+songs again. Seeking while nothing is active moves that starting point. Besides playback, a
+restart brings back the open view and collection, the library tab, filter, sort, direction and
+your own order, the new-releases filter, column sorts, the last playlist for `P`, the sidebar,
+panel widths and visibility, the lyrics page with romanization and translation, and the window
+size. Settings → playback can also restore shuffle/repeat on reconnect or resume on startup.
 
 The library has chips for **all**, playlists, albums and artists (click the open chip again to go
 back to all) and, in its frame line, the sort (`recent`, `added`, `a-z`, `creator`, `custom`;

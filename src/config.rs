@@ -259,7 +259,7 @@ impl Default for Library {
 pub struct Playback {
     /// Re-apply the last-known shuffle/repeat once a device is available after reconnecting.
     pub restore_shuffle_repeat: bool,
-    /// Start the last context (paused position is not restored) when nothing is playing.
+    /// Continue the last session (track, position, queue) when nothing is playing at startup.
     pub resume_on_startup: bool,
 }
 

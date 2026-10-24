@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-24
+
+Session restore from the Sys24 design.
+
+- rtify remembers the playback position, the device's volume and the songs queued from rtify
+  that have not played yet (`session.json`).
+- When Spotify has nothing active, rtify shows the last track paused at its position (with the
+  last device and volume) instead of an empty player, and the queue panel lists the songs still
+  queued. Play continues exactly there: the same context, track, position, shuffle, repeat and
+  volume on the last device, then queues those songs again. Nothing starts by itself.
+- Seeking while nothing is active moves the point play continues from.
+- "Resume on startup" uses the same restore, including position and queue.
+
 ## [0.5.0] - 2026-10-24
 
 Library and track lists from the Sys24 design.

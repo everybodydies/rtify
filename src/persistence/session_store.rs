@@ -21,6 +21,8 @@ pub struct LastTrack {
     pub album: String,
     pub image_url: String,
     pub duration_ms: u64,
+    /// Where playback was when the state was last remembered (paused there on restore).
+    pub position_ms: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -36,6 +38,10 @@ pub struct AccountSession {
     pub repeat: Option<String>,
     pub device_id: Option<String>,
     pub device_name: Option<String>,
+    /// Last-known volume of the device that played, shown until a device is active again.
+    pub volume: Option<u32>,
+    /// Songs queued from rtify that Spotify had not played yet; queued again on resume.
+    pub queue: Vec<LastTrack>,
     /// Target of "add to last playlist".
     pub last_playlist: Option<String>,
     /// The "sign in for the built-in player" notice was shown once already.
