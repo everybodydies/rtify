@@ -509,7 +509,6 @@ impl MainWindow {
         keys.set_propagation_phase(gtk::PropagationPhase::Capture);
         let a = app.clone();
         keys.connect_key_pressed(move |ctl, key, _, mods| {
-            log::warn!("key {:?} {:?} -> {:?}", key.name(), mods, crate::keymap::combo(key, mods));
             let Some(combo) = crate::keymap::combo(key, mods) else {
                 return glib::Propagation::Proceed;
             };

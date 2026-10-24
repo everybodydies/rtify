@@ -744,10 +744,14 @@ class Run:
 
         # LRCLIB down: the lyrics page says so instead of searching forever.
         self.faults([{"path": "^/api/(get|search)$", "drop": True}])
-        for _ in range(8):
+        # Earlier checks skip through the queue and may leave repeat-one on, so walk all of it.
+        self.api("PUT", "/me/player/repeat?state=off")
+        for _ in range(40):
             self.api("PUT", "/me/player/next")
             if not lyrics_fetched(playing()):
                 break
+        else:
+            problems.append("every song in the demo queue already has lyrics; LRCLIB-down case not tested")
         if not poll(lambda: in_player_bar(playing()), 30):
             problems.append(f"rtify did not pick up the track change to {playing()!r} within 30 s")
         cli("--toggle-lyrics")
