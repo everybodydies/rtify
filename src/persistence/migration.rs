@@ -14,7 +14,24 @@ pub enum MigrationError {
 type Step = fn(&mut toml::Table);
 
 /// `STEPS[i]` migrates version `i + 1` to `i + 2`. Version 1 is the first schema.
-const STEPS: &[Step] = &[];
+const STEPS: &[Step] = &[v1_to_v2];
+
+/// The system24 OLED look moved to the mint accent and a smaller base size. Values that were
+/// still the old defaults follow; anything the user picked stays.
+fn v1_to_v2(table: &mut toml::Table) {
+    let Some(toml::Value::Table(a)) = table.get_mut("appearance") else {
+        return;
+    };
+    if a.get("fixed_accent")
+        .and_then(|v| v.as_str())
+        .is_some_and(|v| v.eq_ignore_ascii_case("#b589d6"))
+    {
+        a.insert("fixed_accent".into(), crate::theme::system24::DEFAULT_ACCENT.into());
+    }
+    if a.get("font_size").and_then(|v| v.as_integer()) == Some(11) {
+        a.insert("font_size".into(), toml::Value::Integer(10));
+    }
+}
 
 /// Returns whether anything changed (the caller then rewrites the file).
 pub fn migrate(table: &mut toml::Table) -> Result<bool, MigrationError> {
@@ -51,6 +68,18 @@ mod tests {
     fn current_is_untouched() {
         let mut t: toml::Table = toml::from_str(&format!("version = {CONFIG_VERSION}")).unwrap();
         assert_eq!(migrate(&mut t), Ok(false));
+    }
+
+    #[test]
+    fn v1_defaults_follow_the_new_look() {
+        let mut t: toml::Table = toml::from_str("version = 1\n[appearance]\nfixed_accent = \"#B589D6\"\nfont_size = 11\n").unwrap();
+        assert_eq!(migrate(&mut t), Ok(true));
+        assert_eq!(t["appearance"]["fixed_accent"].as_str(), Some("#9bd4c9"));
+        assert_eq!(t["appearance"]["font_size"].as_integer(), Some(10));
+        let mut t: toml::Table = toml::from_str("version = 1\n[appearance]\nfixed_accent = \"#ff8800\"\nfont_size = 13\n").unwrap();
+        migrate(&mut t).unwrap();
+        assert_eq!(t["appearance"]["fixed_accent"].as_str(), Some("#ff8800"));
+        assert_eq!(t["appearance"]["font_size"].as_integer(), Some(13));
     }
 
     #[test]

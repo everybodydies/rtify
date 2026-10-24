@@ -468,16 +468,16 @@ fn backgrounds_are_opaque() {
     report("opaque state colors", &v);
 }
 
-/// "Anti-Blooming: Text maximal L 90 %."
+/// "Anti-Blooming: Text maximal L 96 % und nie Reinweiß."
 #[test]
-fn text_is_at_most_l90() {
+fn text_is_at_most_l96() {
     let mut v = Vec::new();
     for (name, css) in std::iter::once(("default".to_owned(), default_css().1)).chain(sweep_css()) {
         for d in decls(&css).iter().filter(|d| d.prop == "color") {
             for found in colors(&d.value) {
                 if let Found::Color(c) = found {
                     let (l, _) = c.on_black().oklch();
-                    if l > 0.905 {
+                    if l > 0.965 {
                         v.push(format!(
                             "[{name}] {} is L {:.1} % @@ {} {{ color: {} }}",
                             c.hex(),
@@ -490,7 +490,7 @@ fn text_is_at_most_l90() {
             }
         }
     }
-    report("text at most L 90 %", &v);
+    report("text at most L 96 %", &v);
 }
 
 /// "Der Akzent bleibt pastellig (Chroma ≈ 0.12)", "keine gesättigten Neonfarben".
@@ -788,11 +788,16 @@ fn checker_reads_css_and_colors() {
     assert!(matches!(colors(&d[0].value)[..], [Found::Color(c)] if c.r == 1.0 && c.a == 1.0));
     assert!(matches!(colors(&d[1].value)[..], [Found::Color(c)] if c.r == 1.0 && c.a == 0.5));
     let Found::Color(accent) = &colors(&d[2].value)[0] else { panic!() };
-    assert_eq!(accent.hex(), "#b589d6", "DESIGN.md: accent-2 = oklch(70% 0.12 310) ≈ #B589D6");
+    assert_eq!(accent.hex(), "#b589d6", "oklch() colors are parsed and converted");
     let (l, c) = accent.oklch();
     assert!((l - 0.70).abs() < 0.005 && (c - 0.12).abs() < 0.005);
-    let (l18, _) = parse_hex("121212").unwrap().oklch();
-    assert!((l18 - 0.18).abs() < 0.01, "DESIGN.md: hover oklch(18%) ≈ #121212");
+    let (l_mint, c_mint) = parse_hex("9bd4c9").unwrap().oklch();
+    assert!(
+        (l_mint - 0.83).abs() < 0.01 && (c_mint - 0.06).abs() < 0.01,
+        "DESIGN.md: accent-2 = oklch(83% 0.06 182) ≈ #9BD4C9"
+    );
+    let (l18, _) = parse_hex("141414").unwrap().oklch();
+    assert!((l18 - 0.19).abs() < 0.01, "DESIGN.md: hover oklch(19%) ≈ #141414");
     assert!(matches!(colors("alpha(#ffffff, 0.1)")[..], [Found::Color(c)] if (c.a - 0.1).abs() < 1e-9));
     assert!(matches!(colors("mix(#000, #fff, 0.5)")[..], [Found::Unknown(_)]));
     assert!(colors("solid transparent").len() == 1);

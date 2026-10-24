@@ -79,9 +79,12 @@ def artist_ref(i):
 
 ALBUM_NAMES = ["Midnight Circuits", "Glass Horizons", "Stromausfall", "Paper Satellites", "Lumen",
                "Dust & Chrome", "Nordlicht", "Slow Machines", "Afterglow FM", "Kassette 84"]
+# Spread over "this week" … "earlier" as seen from the UI test's pinned date (2026-10-24).
+RELEASE_DATES = ["2026-10-23", "2026-10-20", "2026-10-11", "2026-10-02", "2026-08-14", "2026-03-06",
+                 "2025-11-21", "2019-05-01", "2016", "2012-09"]
 ALBUMS = [dict(id=f"al{i}", name=n, type="album", uri=f"spotify:album:al{i}",
                album_type="album" if i % 3 else "single", images=img(200 + i), artists=[artist_ref(i)],
-               release_date=f"20{10 + i}-05-01", total_tracks=10) for i, n in enumerate(ALBUM_NAMES)]
+               release_date=RELEASE_DATES[i], total_tracks=10) for i, n in enumerate(ALBUM_NAMES)]
 
 TRACK_NAMES = ["Neon Rain", "Drive Home", "Kilometer Null", "Silent Frequencies", "Ocean of Static",
                "Late Night Diner", "Blaue Stunde", "Signal Lost", "Polaroid", "Overdrive", "Heatwave",

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub const CONFIG_VERSION: u32 = 1;
+pub const CONFIG_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -82,11 +82,11 @@ impl Default for Appearance {
         Self {
             style: "system24".into(),
             palette_source: PaletteSource::Fixed,
-            fixed_accent: "#b589d6".into(),
+            fixed_accent: crate::theme::system24::DEFAULT_ACCENT.into(),
             fixed_background: String::new(),
             light: false,
             font_family: "DM Mono, JetBrains Mono, monospace".into(),
-            font_size: 11,
+            font_size: 10,
             animations_enabled: true,
             reduced_motion: false,
             oled: true,
@@ -104,9 +104,15 @@ pub struct Window {
     pub height: i32,
     pub maximized: bool,
     pub compact: bool,
-    /// Right-hand "now playing" panel with cover and queue.
+    /// Right-hand column: "now playing" (cover, title) and the queue below it.
     pub now_playing_panel: bool,
+    /// The queue panel under "now playing".
+    pub queue_panel: bool,
     pub sidebar_width: i32,
+    /// Width of the right-hand column.
+    pub right_width: i32,
+    /// The left column shrinks to an icon rail.
+    pub sidebar_collapsed: bool,
 }
 
 impl Default for Window {
@@ -120,7 +126,10 @@ impl Default for Window {
             maximized: false,
             compact: false,
             now_playing_panel: true,
-            sidebar_width: 300,
+            queue_panel: true,
+            sidebar_width: 270,
+            right_width: 300,
+            sidebar_collapsed: false,
         }
     }
 }
@@ -219,6 +228,10 @@ pub struct Library {
     pub sort: String,
     /// Song order per playlist/album URI ("title:asc", "added:desc" …); absent = custom order.
     pub track_sort: BTreeMap<String, String>,
+    /// New releases: "all", "albums" or "singles".
+    pub releases_filter: String,
+    /// Last searches, newest first.
+    pub recent_searches: Vec<String>,
 }
 
 impl Default for Library {
@@ -228,6 +241,8 @@ impl Default for Library {
             track_sort: BTreeMap::new(),
             filter: String::new(),
             sort: "recent".into(),
+            releases_filter: "all".into(),
+            recent_searches: Vec::new(),
         }
     }
 }
@@ -328,7 +343,7 @@ mod tests {
 
     #[test]
     fn partial_file_keeps_defaults() {
-        let c: Config = toml::from_str("version = 1\n[lyrics]\nromanization = false\n").unwrap();
+        let c: Config = toml::from_str("version = 2\n[lyrics]\nromanization = false\n").unwrap();
         assert!(!c.lyrics.romanization);
         assert!(c.lyrics.enabled);
         assert!(c.lyrics.follow_playback);

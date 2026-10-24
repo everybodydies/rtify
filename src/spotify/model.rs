@@ -198,6 +198,9 @@ pub struct Album {
     pub artists: Vec<ArtistRef>,
     #[serde(deserialize_with = "null_as_default")]
     pub release_date: String,
+    /// "album", "single" or "compilation".
+    #[serde(deserialize_with = "null_as_default")]
+    pub album_type: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -269,6 +272,16 @@ pub struct PlaylistItem {
     pub added_at: String,
     #[serde(alias = "track")]
     pub item: Option<Track>,
+}
+
+/// One entry of `/me/player/recently-played`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct PlayHistory {
+    pub track: Track,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub played_at: String,
+    #[serde(default)]
+    pub context: Option<Context>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]

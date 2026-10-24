@@ -23,8 +23,10 @@ dev/ui-test.sh OUT --update-references  # accept the current look
 
 - **geometry**: the window shrinks to 1024 × 640 and does not open wider than a 1280 px screen.
 - **a11y-names**: every visible button has a name a screen reader can say, not just `▶` or `⚙`.
-- **screenshots**: ten pages (playlist, album, artist, liked songs, search, lyrics, compact mode,
-  device menu, preferences, row menu) compared with `tests/ui/reference/`. Up to 0.4 % of the
+- **screenshots**: fourteen pages (home, playlist, album, artist, liked songs, search, new
+  releases, lyrics, compact mode, device menu, settings, minimized sidebar, row menu) compared
+  with `tests/ui/reference/`. The clock is pinned (`RTIFY_DEMO_NOW`) so the greeting, the top
+  bar and release ages match. Up to 0.4 % of the
   pixels may differ; failures leave `NAME.diff.png` in `OUT/`.
 - **scroll-jump**: opening and closing a row menu leaves the track list where it was, at the
   top, scrolled down, and after a search.

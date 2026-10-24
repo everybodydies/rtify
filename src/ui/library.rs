@@ -31,6 +31,8 @@ pub struct Collection {
     pub description: String,
     pub owner_id: String,
     pub collaborative: bool,
+    /// Artist ids of an album (for new releases).
+    pub artist_ids: Vec<String>,
 }
 
 impl Collection {
@@ -46,6 +48,7 @@ impl Collection {
             description: p.description.clone().unwrap_or_default(),
             owner_id: p.owner.id.clone(),
             collaborative: p.collaborative,
+            ..Default::default()
         }
     }
 
@@ -60,6 +63,7 @@ impl Collection {
             meta,
             kind: "album".into(),
             images: a.images.clone(),
+            artist_ids: a.artists.iter().filter_map(|x| x.id.clone()).collect(),
             ..Default::default()
         }
     }
@@ -115,7 +119,7 @@ pub fn cover_widget(app: &App, c: &Collection, size: i32) -> gtk::Widget {
             }
             let p = pic.clone();
             app.load_image(&url, move |t| p.set_paintable(t.as_ref()));
-            pic.upcast()
+            square(&pic, size).upcast()
         }
         None => {
             let l = gtk::Label::new(Some(match c.kind.as_str() {
@@ -197,7 +201,7 @@ impl Sidebar {
         body.append(&chips);
         body.append(&filter_row);
         body.append(&scroll);
-        let root = panel("your library", &body).root;
+        let root = panel("library", &body).root;
         root.set_size_request(240, -1);
 
         let tab = if TABS.contains(&cfg.last_tab.as_str()) {
@@ -393,6 +397,31 @@ impl Sidebar {
             .chain(st.artists.iter())
             .find(|c| c.uri == uri)
             .cloned()
+    }
+
+    /// Playlists, albums and artists, in that order.
+    pub fn all(&self) -> Vec<Collection> {
+        let st = self.state.borrow();
+        st.playlists
+            .iter()
+            .chain(st.albums.iter())
+            .chain(st.artists.iter())
+            .cloned()
+            .collect()
+    }
+
+    /// Followed artists first, then the artists of saved albums, each once.
+    pub fn artist_ids(&self) -> Vec<String> {
+        let st = self.state.borrow();
+        let mut ids: Vec<String> = Vec::new();
+        let followed = st.artists.iter().map(|a| crate::spotify::client::uri_id(&a.uri).to_owned());
+        let from_albums = st.albums.iter().flat_map(|a| a.artist_ids.iter().cloned());
+        for id in followed.chain(from_albums) {
+            if !id.is_empty() && !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        ids
     }
 
     pub fn first_playlist(&self) -> Option<Collection> {

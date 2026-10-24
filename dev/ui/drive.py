@@ -69,6 +69,8 @@ SKIP = re.compile(r"quit|log ?out|sign ?out|delete|remove|unfollow|close", re.I)
 BUTTONS = ("push button", "toggle button", "menu item", "check box", "radio button")
 # Other things a screen reader lands on that need a name too.
 NAMED = ("list item", "slider", "text", "entry", "spin button")
+# Buttons that leave the current view or hide part of it: click-all presses them last.
+LEAVES = re.compile(r"^(settings|minimize|show|back|forward|lyrics)\b", re.I)
 
 
 class Run:
@@ -215,6 +217,9 @@ class Run:
             grab(path)
             shots.append((name, path))
 
+        shot("home")
+        click_center(wait(lambda: first(self.frame, role="list item", name="Coding Nights"), 5, "Coding Nights"))
+        settle(1.5)
         shot("playlist")
         self.open_library_tab("albums")
         self.click_first_row()
@@ -231,7 +236,8 @@ class Run:
         key("Return")
         settle(2)
         shot("search")
-        key("Escape")
+        self.show_nav("new releases")
+        shot("releases")
         click_center(wait(lambda: first(self.frame, role="list item", name="Coding Nights"), 5, "Coding Nights"))
         settle(1)
         cli("--toggle-lyrics")
@@ -255,14 +261,12 @@ class Run:
             missing.append("devices (no device toggle button found)")
         cli("--preferences")
         settle(2)
-        # Without a window manager nothing raises the new window.
-        for wid in [] if WAYLAND else subprocess.run(["xdotool", "search", "--name", "settings"], capture_output=True,
-                                  text=True).stdout.split():
-            subprocess.run(["xdotool", "windowraise", wid], check=False)
-        shot("preferences")
-        key("Escape")
-        close_other_windows(self.app, self.frame)
-        settle(1)
+        shot("settings")
+        self.press_frame_button("minimize")
+        shot("sidebar-minimized")
+        self.press_frame_button("show")
+        click_center(wait(lambda: first(self.frame, role="list item", name="Coding Nights"), 5, "Coding Nights"))
+        settle(1.5)
         # Last: closing a row menu may move the list (see scroll-jump), which would leak into
         # every later screenshot.
         self.open_row_menu(2)
@@ -452,19 +456,23 @@ class Run:
             for line in self.log_since(offset):
                 problems.append(f"after clicking {label}: {line}")
 
-        # Every distinct visible button of the main window.
-        for o in [o for o in walk(self.frame) if o.get_role_name() in BUTTONS and showing(o)]:
-            if not self.alive():
-                break
-            try:
-                name = (o.get_name() or "").strip()
-                label = f"{o.get_role_name()} {name!r}"
-            except Exception:
-                continue
-            if label in seen or SKIP.search(name):
-                continue
-            seen.add(label)
-            try_click(o, label)
+        def click_visible(skip=None):
+            """Every distinct button showing now; one that a previous click hid is left out."""
+            for o in [o for o in walk(self.frame) if o.get_role_name() in BUTTONS and showing(o)]:
+                if not self.alive():
+                    break
+                try:
+                    name = (o.get_name() or "").strip()
+                    label = f"{o.get_role_name()} {name!r}"
+                except Exception:
+                    continue
+                if label in seen or SKIP.search(name) or (skip and skip.search(name)) or not showing(o):
+                    continue
+                seen.add(label)
+                try_click(o, label)
+
+        # The main window as it is (a playlist), without the buttons that leave it.
+        click_visible(LEAVES)
 
         # Every entry of a track row's context menu, reopening the menu each time.
         if self.alive():
@@ -489,6 +497,17 @@ class Run:
                     key("Escape")
                     continue
                 try_click(item, f"row menu entry {name!r}")
+
+        # Every other view, then the buttons that leave the current one.
+        for view in ("home", "search", "new releases"):
+            if self.alive():
+                self.show_nav(view)
+                click_visible(LEAVES)
+        if self.alive():
+            cli("--preferences")
+            settle(1.5)
+            click_visible(LEAVES)
+            click_visible()
 
         if self.alive():
             problems += [f"at exit: {line}" for line in self.log_since(0) if "at exit" in line]
@@ -1179,6 +1198,19 @@ class Run:
 
     # ------------------------------------------------------------------ navigation helpers
 
+    def show_nav(self, name):
+        """Open a view from the nav panel (number keys would land in a focused entry)."""
+        row = wait(lambda: next((o for o in walk(self.frame) if o.get_role_name() == "list item"
+                                 and o.get_name() == name and showing(o)), None), 5, f"nav entry {name}")
+        click_center(row)
+        settle(1.5)
+
+    def press_frame_button(self, name):
+        b = wait(lambda: next((o for o in walk(self.frame) if o.get_role_name() == "push button"
+                               and o.get_name() == name and showing(o)), None), 5, f"{name} button")
+        do_click(b)
+        settle(1.5)
+
     def open_library_tab(self, name):
         tab = wait(lambda: first(self.frame, role="toggle button", name=name), 5, f"library tab {name}")
         do_click(tab)
@@ -1186,9 +1218,11 @@ class Run:
 
     def library_list(self):
         for o in walk(self.frame):
-            if o.get_role_name() == "label" and o.get_name() == "your library":
-                panel = o.get_parent()
-                return first(panel, role="list")
+            # The library panel's title (the nav entry "library" is a label too, without a list).
+            if o.get_role_name() == "label" and o.get_name() == "library":
+                lst = first(o.get_parent(), role="list")
+                if lst:
+                    return lst
         return None
 
     def click_first_row(self):

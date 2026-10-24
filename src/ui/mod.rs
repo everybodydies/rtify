@@ -1,11 +1,14 @@
 pub mod clamp;
 pub mod collection;
+pub mod home;
 pub mod library;
 pub mod lyrics;
 pub mod menu;
+pub mod nav;
 pub mod nowplaying;
 pub mod player;
-pub mod player_settings;
 pub mod preferences;
+pub mod releases;
+pub mod search;
 pub mod widgets;
 pub mod window;
