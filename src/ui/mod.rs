@@ -5,6 +5,7 @@ pub mod lyrics;
 pub mod menu;
 pub mod nowplaying;
 pub mod player;
+pub mod player_settings;
 pub mod preferences;
 pub mod widgets;
 pub mod window;

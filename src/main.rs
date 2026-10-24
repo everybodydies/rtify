@@ -4,6 +4,7 @@ use rtify::desktop::shortcuts;
 use rtify::persistence::ConfigStore;
 
 fn main() -> std::process::ExitCode {
+    rtify::player::init();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("rtify=info")).init();
     let args: Vec<String> = std::env::args().collect();
     // Parse here first so --help, --version and typos are answered by this process, not

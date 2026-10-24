@@ -444,7 +444,8 @@ pub fn open(app: &App) {
     content.set_margin_bottom(12);
     content.set_margin_start(12);
     content.set_margin_end(12);
-    for s in [appearance, background, playback, lyrics, account, shortcuts_section] {
+    let builtin = super::player_settings::section(app, &c);
+    for s in [appearance, background, playback, builtin, lyrics, account, shortcuts_section] {
         content.append(&s);
     }
     let scroller = gtk::ScrolledWindow::builder()

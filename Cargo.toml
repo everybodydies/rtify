@@ -1,21 +1,24 @@
 [package]
 name = "rtify"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.92"
-description = "Spotify Connect companion for Linux desktops: System24 look, tray, global shortcuts, animated lyrics"
+description = "Spotify client for Linux desktops: built-in Connect player, System24 look, tray, global shortcuts, animated lyrics"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/everybodydies/rtify"
 readme = "README.md"
 
 [features]
-default = ["japanese-kanji"]
+default = ["japanese-kanji", "builtin-player"]
 # Kanji readings via Lindera's embedded IPADIC dictionary (adds the dictionary to the binary;
 # build with --no-default-features for a small binary that romanizes kana only).
 japanese-kanji = ["dep:lindera"]
 # Three bundled demo songs in the lyrics `⋯` menu, for trying the renderer without Spotify.
 # Development only: release builds and the pacman package leave it off.
 demo = []
+# rtify as a Spotify Connect device of its own (librespot, PulseAudio/PipeWire output). Without it
+# rtify only remote-controls other devices.
+builtin-player = ["dep:librespot-core", "dep:librespot-connect", "dep:librespot-playback", "dep:librespot-protocol", "dep:rustls"]
 
 [dependencies]
 gtk = { package = "gtk4", version = "0.11", features = ["v4_14"] }
@@ -41,6 +44,12 @@ thiserror = "2"
 pinyin = "0.11"
 quick-xml = "0.42"
 lindera = { version = "6", optional = true, features = ["embed-ipadic"] }
+librespot-core = { version = "0.8", optional = true, default-features = false, features = ["rustls-tls-native-roots"] }
+librespot-connect = { version = "0.8", optional = true, default-features = false, features = ["rustls-tls-native-roots"] }
+librespot-playback = { version = "0.8", optional = true, default-features = false, features = ["pulseaudio-backend", "rustls-tls-native-roots"] }
+librespot-protocol = { version = "0.8", optional = true }
+# Already in the tree twice over (reqwest, librespot); rtify only picks the process-wide provider.
+rustls = { version = "0.23", optional = true, default-features = false, features = ["aws-lc-rs"] }
 
 [dev-dependencies]
 tempfile = "3"

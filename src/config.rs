@@ -19,6 +19,7 @@ pub struct Config {
     pub playback: Playback,
     pub spotify: Spotify,
     pub shortcuts: Shortcuts,
+    pub player: Player,
 }
 
 impl Default for Config {
@@ -33,6 +34,7 @@ impl Default for Config {
             playback: Playback::default(),
             spotify: Spotify::default(),
             shortcuts: Shortcuts::default(),
+            player: Player::default(),
         }
     }
 }
@@ -279,6 +281,35 @@ impl Default for Shortcuts {
         Self {
             portal: true,
             bindings: bindings.into_iter().map(|(a, b)| (a.to_owned(), b.to_owned())).collect(),
+        }
+    }
+}
+
+/// The built-in Spotify Connect device (`player`, librespot). Its login lives in the Secret
+/// Service like the Web API one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Player {
+    pub enabled: bool,
+    /// Name in Spotify's device lists; empty: "rtify on <hostname>".
+    pub device_name: String,
+    /// Stream quality in kbit/s: 96, 160 or 320.
+    pub bitrate: u32,
+    /// Spotify's loudness normalisation (like the official clients' default).
+    pub normalisation: bool,
+}
+
+impl Player {
+    pub const BITRATES: [u32; 3] = [96, 160, 320];
+}
+
+impl Default for Player {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            device_name: String::new(),
+            bitrate: 320,
+            normalisation: true,
         }
     }
 }
