@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use gtk::{gdk, glib, prelude::*};
 
+use super::icons::{Icon, IconView};
 use super::widgets::*;
 use crate::app::{App, PlayerOp};
 use crate::commands::Command;
@@ -19,8 +20,10 @@ pub struct PlayerBar {
     title: gtk::Label,
     artist: gtk::Label,
     play: gtk::Button,
+    play_icon: IconView,
     shuffle: gtk::ToggleButton,
     repeat: gtk::Button,
+    repeat_icon: IconView,
     like: gtk::ToggleButton,
     progress: gtk::Scale,
     elapsed: gtk::Label,
@@ -39,16 +42,28 @@ pub struct PlayerBar {
     volume_touched: Rc<Cell<Option<std::time::Instant>>>,
 }
 
-fn icon(text: &str, tooltip: &str) -> gtk::Button {
-    let b = button(text, tooltip);
-    b.add_css_class("rt-icon");
-    b
+/// Every control in the bar: framed, 32px high, accent frame and bright text on hover.
+fn framed<W: IsA<gtk::Widget>>(w: W, square: bool) -> W {
+    w.add_css_class("rt-pbtn");
+    if square {
+        w.add_css_class("rt-pbtn-square");
+    }
+    w.set_valign(gtk::Align::Center);
+    w
 }
 
-fn icon_toggle(text: &str, tooltip: &str) -> gtk::ToggleButton {
-    let b = toggle(text, tooltip);
-    b.add_css_class("rt-icon");
-    b
+fn named(w: &impl IsA<gtk::Accessible>, name: &str) {
+    w.update_property(&[gtk::accessible::Property::Label(name)]);
+    w.reset_relation(gtk::AccessibleRelation::LabelledBy);
+}
+
+fn icon_button(icon: Icon, name: &str) -> (gtk::Button, IconView) {
+    let view = IconView::new(icon, 20);
+    let b = framed(gtk::Button::new(), true);
+    b.set_child(Some(&view.area));
+    b.set_tooltip_text(Some(name));
+    named(&b, name);
+    (b, view)
 }
 
 impl PlayerBar {
@@ -61,8 +76,7 @@ impl PlayerBar {
         meta.set_valign(gtk::Align::Center);
         meta.append(&title);
         meta.append(&artist);
-        let like = icon_toggle("♡", "Save to your library");
-        like.set_valign(gtk::Align::Center);
+        let like = framed(toggle("♡", "Save to your library"), true);
         let left = hbox(12);
         left.append(&cover);
         left.append(&meta);
@@ -70,13 +84,17 @@ impl PlayerBar {
         left.set_size_request(240, -1);
 
         // Center: transport + progress.
-        let shuffle = icon_toggle("⇄", "Shuffle (Ctrl+S)");
-        let prev = icon("◀◀", "Previous (Ctrl+←)");
-        let play = button("▶", "Play/Pause (Space)");
+        let shuffle = framed(gtk::ToggleButton::new(), true);
+        shuffle.set_child(Some(&IconView::new(Icon::Shuffle, 20).area));
+        shuffle.set_tooltip_text(Some("Shuffle"));
+        named(&shuffle, "Shuffle");
+        let (prev, _) = icon_button(Icon::Previous, "Previous");
+        let (play, play_icon) = icon_button(Icon::Play, "Play");
         play.add_css_class("rt-play");
-        let next = icon("▶▶", "Next (Ctrl+→)");
-        let repeat = icon("↻", "Repeat (Ctrl+R)");
-        let controls = hbox(10);
+        play.set_tooltip_text(Some("Play/Pause"));
+        let (next, _) = icon_button(Icon::Next, "Next");
+        let (repeat, repeat_icon) = icon_button(Icon::Repeat, "Repeat");
+        let controls = hbox(6);
         controls.set_halign(gtk::Align::Center);
         for w in [
             shuffle.upcast_ref::<gtk::Widget>(),
@@ -108,8 +126,9 @@ impl PlayerBar {
         center.append(&bar);
 
         // Right: lyrics, now-playing panel, devices, volume.
-        let lyrics = icon_toggle("lyrics", "Lyrics (Ctrl+Y)");
-        let panel_toggle = icon_toggle("▤", "Now playing panel");
+        let lyrics = framed(toggle("lyrics", "Lyrics"), false);
+        let panel_toggle = framed(toggle("queue", "Now playing and queue"), false);
+        named(&panel_toggle, "queue, now playing panel");
         let devices = gtk::ListBox::new();
         devices.add_css_class("rt-list");
         // ◉ marks the active device; a selected row would only mark whichever row got focus first.
@@ -121,21 +140,24 @@ impl PlayerBar {
         let popover = gtk::Popover::new();
         popover.set_child(Some(&dev_box));
         // A child (not `label`) keeps GTK from adding a dropdown arrow.
-        let device_label = gtk::Label::new(Some("⌁"));
+        let device_label = label("no device", &["rt-pbtn-value"]);
         device_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         device_label.set_max_width_chars(14);
         device_label.set_width_chars(6);
+        let device_box = hbox(6);
+        device_box.append(&label("out", &[]));
+        device_box.append(&device_label);
         let devices_button = gtk::MenuButton::builder()
-            .child(&device_label)
+            .child(&device_box)
             .popover(&popover)
             .tooltip_text("Spotify Connect devices")
             .build();
-        devices_button.add_css_class("rt-icon");
-        name_symbol_button(&devices_button, "", "Spotify Connect devices");
+        let devices_button = framed(devices_button, false);
+        named(&devices_button, "Spotify Connect devices");
         let volume = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 5.0);
         volume.set_draw_value(false);
-        volume.set_size_request(110, -1);
-        volume.set_tooltip_text(Some("Volume (Ctrl+↑/↓, scroll)"));
+        volume.set_size_request(80, -1);
+        volume.set_tooltip_text(Some("Volume"));
         // Wheel over the volume bar: exactly 5 % per notch (GtkRange's own scroll step is far
         // larger on many mice and touchpads).
         let wheel = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL | gtk::EventControllerScrollFlags::DISCRETE);
@@ -153,13 +175,46 @@ impl PlayerBar {
             glib::Propagation::Stop
         });
         volume.add_controller(wheel);
+        // "vol" and the slider in a frame whose top and bottom light up to the volume.
+        let vol_row = hbox(8);
+        vol_row.add_css_class("rt-volume");
+        vol_row.append(&label("vol", &[]));
+        vol_row.append(&volume);
+        let volume_box = gtk::Overlay::new();
+        volume_box.set_child(Some(&vol_row));
+        volume_box.set_valign(gtk::Align::Center);
+        // The frame is a CSS border; the lit part is drawn over it in the accent.
+        let lit_frame = gtk::DrawingArea::new();
+        lit_frame.add_css_class("rt-volume-lit");
+        lit_frame.set_can_target(false);
+        let v = volume.clone();
+        lit_frame.set_draw_func(move |area, cr, w, h| {
+            let (w, h) = (w as f64, h as f64);
+            let lit = (v.value() / 100.0).clamp(0.0, 1.0) * w;
+            if lit <= 0.0 {
+                return;
+            }
+            let c = area.color();
+            cr.set_source_rgb(c.red().into(), c.green().into(), c.blue().into());
+            cr.rectangle(0.0, 0.0, lit, 1.0);
+            cr.rectangle(0.0, h - 1.0, lit, 1.0);
+            // The left side lights with any volume, the right one only at 100%.
+            cr.rectangle(0.0, 0.0, 1.0, h);
+            if lit >= w {
+                cr.rectangle(w - 1.0, 0.0, 1.0, h);
+            }
+            let _ = cr.fill();
+        });
+        volume_box.add_overlay(&lit_frame);
+        let f = lit_frame.clone();
+        volume.connect_value_changed(move |_| f.queue_draw());
         let right = hbox(6);
         right.set_halign(gtk::Align::End);
         right.set_valign(gtk::Align::Center);
         right.append(&lyrics);
         right.append(&panel_toggle);
         right.append(&devices_button);
-        right.append(&volume);
+        right.append(&volume_box);
         right.set_size_request(240, -1);
 
         let root = gtk::CenterBox::new();
@@ -174,8 +229,10 @@ impl PlayerBar {
             title,
             artist,
             play: play.clone(),
+            play_icon,
             shuffle: shuffle.clone(),
             repeat: repeat.clone(),
+            repeat_icon,
             like: like.clone(),
             progress: progress.clone(),
             elapsed,
@@ -320,12 +377,21 @@ impl PlayerBar {
                     .set_text(pb.device.as_ref().map(|d| d.name.as_str()).unwrap_or("no active device"));
             }
         }
-        self.play.set_label(if pb.playing { "❚❚" } else { "▶" });
+        self.play_icon.set(if pb.playing { Icon::Pause } else { Icon::Play });
         // Screen readers say what the button does now, not "Play/Pause".
         self.play
             .update_property(&[gtk::accessible::Property::Label(if pb.playing { "Pause" } else { "Play" })]);
         self.shuffle.set_active(pb.shuffle);
-        self.repeat.set_label(if pb.repeat == Repeat::Track { "↻1" } else { "↻" });
+        self.repeat_icon.set(if pb.repeat == Repeat::Track {
+            Icon::RepeatOne
+        } else {
+            Icon::Repeat
+        });
+        self.repeat.update_property(&[gtk::accessible::Property::Label(match pb.repeat {
+            Repeat::Off => "Repeat",
+            Repeat::Context => "Repeat (on)",
+            Repeat::Track => "Repeat one",
+        })]);
         if pb.repeat == Repeat::Off {
             self.repeat.remove_css_class("rt-on");
         } else {
@@ -347,10 +413,8 @@ impl PlayerBar {
         }
         self.volume
             .set_sensitive(pb.device.as_ref().is_some_and(|d| d.supports_volume != Some(false)));
-        self.device_label.set_text(&match &pb.device {
-            Some(d) => format!("⌁ {}", d.name),
-            None => "⌁".to_owned(),
-        });
+        self.device_label
+            .set_text(pb.device.as_ref().map(|d| d.name.as_str()).unwrap_or("no device"));
         self.devices_button.set_tooltip_text(Some(&match &pb.device {
             Some(d) => format!("Playing on {} · Spotify Connect devices", d.name),
             None => "Spotify Connect devices".to_owned(),
@@ -383,6 +447,15 @@ impl PlayerBar {
         self.lyrics.set_active(lyrics);
         self.panel_toggle.set_active(panel);
         self.updating.set(false);
+    }
+
+    /// The device frame takes the accent while this computer (the built-in player) plays.
+    pub fn set_playing_here(&self, here: bool) {
+        if here {
+            self.devices_button.add_css_class("rt-on");
+        } else {
+            self.devices_button.remove_css_class("rt-on");
+        }
     }
 
     /// `is_local`: the device is rtify's own built-in player.

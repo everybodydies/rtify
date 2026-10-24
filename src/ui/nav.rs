@@ -19,6 +19,8 @@ pub const VIEWS: [(&str, &str, &str); 4] = [
 pub struct NavPanel {
     pub root: gtk::Overlay,
     list: gtk::ListBox,
+    /// The key of each view, at the right end of its row.
+    keys: Vec<gtk::Label>,
 }
 
 impl NavPanel {
@@ -27,18 +29,21 @@ impl NavPanel {
         list.add_css_class("rt-list");
         list.add_css_class("rt-nav");
         tab_leaves(&list);
-        for (i, (_, text, _)) in VIEWS.iter().enumerate() {
+        let mut keys = Vec::new();
+        for (_, text, _) in VIEWS {
             let row = hbox(8);
             let name = label(text, &[]);
             name.set_hexpand(true);
             row.append(&name);
-            row.append(&label(&(i + 1).to_string(), &["rt-key"]));
+            let key = label("", &["rt-key"]);
+            row.append(&key);
+            keys.push(key);
             let item = gtk::ListBoxRow::builder().child(&row).build();
             item.update_property(&[gtk::accessible::Property::Label(text)]);
             list.append(&item);
         }
         let p = panel("nav", &list);
-        let minimize = button("minimize", "Shrink the sidebar to icons (B)");
+        let minimize = button("minimize", "Shrink the sidebar to icons");
         let a = app.clone();
         minimize.connect_clicked(move |_| a.set_sidebar_collapsed(true));
         p.add_frame_button(&minimize);
@@ -48,7 +53,14 @@ impl NavPanel {
                 a.show_view(view, true);
             }
         });
-        Self { root: p.root, list }
+        Self { root: p.root, list, keys }
+    }
+
+    /// Show each view's key (`keymap` labels, in `VIEWS` order).
+    pub fn set_keys(&self, labels: &[String]) {
+        for (l, text) in self.keys.iter().zip(labels) {
+            l.set_text(text);
+        }
     }
 
     /// Mark the nav entry of the visible page (none for settings, lyrics or an artist).

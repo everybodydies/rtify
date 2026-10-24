@@ -273,7 +273,7 @@ button.flat, button.rt-icon {{ border-color: transparent; color: {text_body}; }}
 button.flat:hover, button.rt-icon:hover {{ color: {text_bright}; background: transparent; border-color: transparent; }}
 button.rt-icon {{ padding: 2px 6px; min-width: 22px; }}
 button.rt-icon:checked, button.rt-on {{ color: {accent_text}; background: transparent; border-color: transparent; }}
-button.rt-play {{ color: {text}; min-width: 34px; min-height: 30px; padding: 0 10px; font-weight: 500; }}
+
 button.rt-primary {{ background: {accent_fill}; color: {on_accent}; border-color: {accent_fill}; font-weight: 500; padding: 4px 14px; }}
 button.rt-primary:hover {{ background: {accent_fill_hover}; border-color: {accent_fill_hover}; color: {on_accent}; }}
 button.rt-primary:active {{ background: {accent_fill_hover}; box-shadow: inset 0 0 0 2px {on_accent}; }}
@@ -325,14 +325,30 @@ label.rt-badge {{ background: {bg0}; color: {text_body}; border: 1px solid {butt
 .rt-setting {{ border-bottom: 1px solid {border_light}; padding: 10px 0; }}
 .rt-setting label.rt-setting-desc {{ color: {text_faint}; font-size: 0.85em; }}
 .rt-setting.rt-invalid label.rt-setting-desc {{ color: {red}; }}
+.rt-setting label.rt-note-accent {{ color: {accent_text}; }}
+.rt-setting label.rt-note-red {{ color: {red}; }}
+button.rt-keycap {{ font-size: 0.85em; min-height: 22px; padding: 0 8px; color: {text}; }}
+button.rt-keycap.rt-recording {{ border-color: {accent}; color: {accent_text}; }}
+button.rt-keycap.rt-invalid {{ border-color: {red}; color: {red}; }}
 
 /* draggable column dividers: a grey line appears on hover */
 .rt-divider {{ min-width: 12px; }}
 .rt-divider-line {{ min-width: 2px; background: transparent; }}
 .rt-divider:hover > .rt-divider-line {{ background: {text_faint}; }}
 
-/* player bar */
+/* player bar: every control framed and 32px high; the accent marks what is on */
 .rt-playerbar {{ padding: 6px 14px; min-height: 64px; background: {bg1}; }}
+button.rt-pbtn {{ min-height: 30px; padding: 0 12px; color: {text_body}; }}
+button.rt-pbtn-square {{ min-width: 30px; padding: 0; }}
+button.rt-pbtn:hover {{ border-color: {accent}; color: {text_bright}; }}
+button.rt-pbtn:checked, button.rt-pbtn.rt-on {{ border-color: {accent}; color: {accent_text}; background: transparent; }}
+button.rt-pbtn label.rt-pbtn-value {{ color: {text}; }}
+button.rt-pbtn.rt-play {{ background: {accent_fill}; color: {on_accent}; border-color: {accent_fill}; }}
+button.rt-pbtn.rt-play:hover {{ background: {accent_fill_hover}; border-color: {accent_fill_hover}; color: {on_accent}; }}
+button.rt-pbtn.rt-play:focus-visible {{ outline: 2px solid {on_accent}; outline-offset: -4px; }}
+.rt-volume {{ min-height: 30px; padding: 0 12px; color: {text_body}; border: 1px solid {button_border}; }}
+.rt-volume:hover {{ color: {text_bright}; }}
+.rt-volume-lit {{ color: {accent}; }}
 
 scale {{ padding: 6px 0; }}
 scale > trough {{ background: {border}; min-height: 2px; border-radius: 0; border: none; }}
@@ -375,8 +391,18 @@ button.rt-th.rt-on {{ color: {accent_text}; }}
 button.rt-hover {{ opacity: 0; min-width: 0; padding: 0; }}
 list > row:hover button.rt-hover, list > row:selected button.rt-hover {{ opacity: 1; }}
 
-.rt-toast {{ background: {bg0}; border: 1px solid {accent}; padding: 6px 8px 6px 14px; }}
-.rt-toast label {{ color: {text}; }}
+.rt-toast {{ background: {bg0}; border: 1px solid {accent}; min-height: 30px; }}
+.rt-toast-content {{ padding: 0 8px 0 14px; }}
+.rt-toast label {{ color: {text_body}; }}
+.rt-toast-line {{ color: {accent_line}; }}
+@keyframes rt-toast-in {{ from {{ opacity: 0; transform: translateY(14px) scale(0.96); }} to {{ opacity: 1; transform: none; }} }}
+@keyframes rt-toast-out {{ from {{ opacity: 1; transform: none; }} to {{ opacity: 0; transform: translateY(8px) scale(0.98); }} }}
+@keyframes rt-toast-bump-a {{ 0% {{ transform: scale(1); }} 40% {{ transform: scale(1.04); }} 100% {{ transform: scale(1); }} }}
+@keyframes rt-toast-bump-b {{ 0% {{ transform: scale(1); }} 40% {{ transform: scale(1.04); }} 100% {{ transform: scale(1); }} }}
+.rt-toast-in {{ animation: rt-toast-in 260ms cubic-bezier(0.2, 0.9, 0.25, 1.15) both; }}
+.rt-toast-out {{ animation: rt-toast-out 200ms ease-in both; }}
+.rt-toast.rt-toast-bump-a {{ animation: rt-toast-bump-a 220ms ease-out; }}
+.rt-toast.rt-toast-bump-b {{ animation: rt-toast-bump-b 220ms ease-out; }}
 popover.rt-tip > contents {{ padding: 2px 6px; }}
 label.rt-drag-tag {{ background: {bg0}; color: {accent_text}; border: 1px solid {accent}; padding: 3px 8px; }}
 dropdown.rt-compact > button {{ border-color: transparent; background: transparent; padding: 0 4px; color: {text_body}; }}
@@ -407,6 +433,8 @@ list > row:drop(active) {{ box-shadow: inset 2px 0 0 {accent}; background: {bg2}
         text_faint = p.text_faint,
         accent = p.accent,
         accent_text = p.accent_text,
+        // The prototype's 50% accent line, mixed onto the toast's black (no translucency).
+        accent_line = p.accent.mix(p.bg0, 0.5),
         accent_fill = p.accent_fill,
         accent_fill_hover = p.accent_fill_hover,
         on_accent = p.on_accent,

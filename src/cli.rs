@@ -37,6 +37,8 @@ pub struct Cli {
     pub volume_up: bool,
     #[arg(long, help = Command::VolumeDown.description())]
     pub volume_down: bool,
+    #[arg(long, help = Command::Mute.description())]
+    pub mute: bool,
     #[arg(long, help = Command::FocusSearch.description())]
     pub focus_search: bool,
     #[arg(long, help = Command::ToggleCompact.description())]
@@ -70,6 +72,7 @@ impl Cli {
             (self.cycle_repeat, Command::CycleRepeat),
             (self.volume_up, Command::VolumeUp),
             (self.volume_down, Command::VolumeDown),
+            (self.mute, Command::Mute),
             (self.focus_search, Command::FocusSearch),
             (self.toggle_compact, Command::ToggleCompact),
             (self.reload_theme, Command::ReloadTheme),

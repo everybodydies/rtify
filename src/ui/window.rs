@@ -44,12 +44,80 @@ pub const PAGES: [&str; 6] = ["home", "search", "library", "releases", "settings
 pub const LEFT_WIDTH: (i32, i32) = (220, 420);
 pub const RIGHT_WIDTH: (i32, i32) = (240, 440);
 
+/// The confirmation that floats above the player bar (see `MainWindow::toast`).
+#[derive(Clone)]
+struct Toast {
+    /// A revealer without its own transition (CSS animates): the toast stays in the
+    /// accessibility tree while hidden, like before.
+    root: gtk::Revealer,
+    /// The framed box; it pulses when the text changes.
+    frame: gtk::Box,
+    label: gtk::Label,
+    undo: gtk::Button,
+    /// The 1px line along the bottom that runs down while the toast is shown.
+    line: gtk::DrawingArea,
+    started: Rc<Cell<Option<(std::time::Instant, std::time::Duration)>>>,
+    timer: Rc<Cell<Option<glib::SourceId>>>,
+    /// Whether the line's redraw timer runs.
+    line_timer: Rc<Cell<bool>>,
+}
+
+impl Toast {
+    fn new() -> Self {
+        let label = label("", &[]);
+        let undo = button("undo", "Undo");
+        undo.add_css_class("rt-chip");
+        let content = hbox(12);
+        content.add_css_class("rt-toast-content");
+        content.set_vexpand(true);
+        content.append(&label);
+        content.append(&undo);
+        let line = gtk::DrawingArea::new();
+        line.add_css_class("rt-toast-line");
+        line.set_content_height(1);
+        let frame = vbox(0);
+        frame.add_css_class("rt-toast");
+        frame.append(&content);
+        frame.append(&line);
+        let root = gtk::Revealer::builder()
+            .child(&frame)
+            .transition_type(gtk::RevealerTransitionType::None)
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::End)
+            .margin_bottom(20)
+            .reveal_child(false)
+            .build();
+        let started: Rc<Cell<Option<(std::time::Instant, std::time::Duration)>>> = Rc::default();
+        let st = started.clone();
+        line.set_draw_func(move |area, cr, w, h| {
+            let Some((t0, total)) = st.get() else { return };
+            let left = 1.0 - (t0.elapsed().as_secs_f64() / total.as_secs_f64()).min(1.0);
+            let c = area.color();
+            cr.set_source_rgb(c.red().into(), c.green().into(), c.blue().into());
+            cr.rectangle(0.0, 0.0, w as f64 * left, h as f64);
+            let _ = cr.fill();
+        });
+        Self {
+            root,
+            frame,
+            label,
+            undo,
+            line,
+            started,
+            timer: Rc::default(),
+            line_timer: Rc::default(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct MainWindow {
     pub window: gtk::ApplicationWindow,
     stack: gtk::Stack,
     body: gtk::Box,
     topsearch: gtk::Box,
+    /// The search key, shown in the search field.
+    search_hint: gtk::Label,
     settings_button: gtk::Button,
     clock: gtk::Label,
     status: gtk::Label,
@@ -57,10 +125,7 @@ pub struct MainWindow {
     pub forward: gtk::Button,
     banner: gtk::Revealer,
     banner_label: gtk::Label,
-    toast: gtk::Revealer,
-    toast_label: gtk::Label,
-    toast_undo: gtk::Button,
-    toast_timer: Rc<Cell<Option<glib::SourceId>>>,
+    toast: Toast,
     left: gtk::Box,
     left_divider: gtk::Box,
     collapsed: Rc<Cell<bool>>,
@@ -212,9 +277,9 @@ impl MainWindow {
 
         // Top bar: back/forward, one search field (hidden while the search view is open),
         // clock and settings.
-        let back = button("‹", "Back (Alt+←)");
+        let back = button("‹", "Back");
         back.add_css_class("rt-square");
-        let forward = button("›", "Forward (Alt+→)");
+        let forward = button("›", "Forward");
         forward.add_css_class("rt-square");
         let left_top = hbox(6);
         left_top.append(&back);
@@ -228,14 +293,15 @@ impl MainWindow {
         topsearch.add_css_class("rt-searchbox");
         topsearch.append(&label("/", &["rt-slash"]));
         topsearch.append(&topentry);
-        topsearch.append(&label("ctrl+k", &["rt-faint", "rt-small"]));
+        let search_hint = label("", &["rt-faint", "rt-small"]);
+        topsearch.append(&search_hint);
         topsearch.set_hexpand(false);
         topsearch.set_size_request(520, -1);
-        topsearch.set_tooltip_text(Some("Search Spotify (Ctrl+K)"));
+        topsearch.set_tooltip_text(Some("Search Spotify"));
         let status = label("offline", &["rt-status-offline", "rt-small"]);
         status.set_visible(false);
         let clock = label("", &["rt-faint", "rt-small", "rt-mono-num"]);
-        let settings_button = button("settings", "Settings (Ctrl+,)");
+        let settings_button = button("settings", "Settings");
         settings_button.set_action_name(Some(&format!("app.{}", Command::Preferences.name())));
         let right_top = hbox(12);
         right_top.append(&status);
@@ -326,26 +392,11 @@ impl MainWindow {
         body.append(&now_playing.root);
 
         // Short confirmations ("added to …  undo") float over the bottom of the content.
-        let toast_label = label("", &[]);
-        let toast_undo = button("undo", "Undo (Ctrl+Z)");
-        toast_undo.add_css_class("rt-chip");
-        let toast_box = hbox(12);
-        toast_box.add_css_class("rt-toast");
-        toast_box.append(&toast_label);
-        toast_box.append(&toast_undo);
-        let toast = gtk::Revealer::builder()
-            .child(&toast_box)
-            .transition_type(gtk::RevealerTransitionType::Crossfade)
-            .transition_duration(150)
-            .halign(gtk::Align::Center)
-            .valign(gtk::Align::End)
-            .margin_bottom(20)
-            .reveal_child(false)
-            .build();
-        toast.set_can_target(true);
+        let toast = Toast::new();
+        let toast_undo = toast.undo.clone();
         let overlay = gtk::Overlay::new();
         overlay.set_child(Some(&body));
-        overlay.add_overlay(&toast);
+        overlay.add_overlay(&toast.root);
 
         let player_panel = panel("player", &player.root).root;
         player_panel.set_margin_start(12);
@@ -367,6 +418,7 @@ impl MainWindow {
             stack,
             body,
             topsearch,
+            search_hint,
             settings_button,
             clock,
             status,
@@ -374,10 +426,7 @@ impl MainWindow {
             forward,
             banner,
             banner_label,
-            toast,
-            toast_label,
-            toast_undo: toast_undo.clone(),
-            toast_timer: Default::default(),
+            toast: toast.clone(),
             left,
             left_divider,
             collapsed: Default::default(),
@@ -451,49 +500,63 @@ impl MainWindow {
             this.window.connect_notify_local(Some(prop), move |_, _| w.window_resized());
         }
         this.window_resized();
+        this.set_key_hints(&app.config.borrow().config.shortcuts.keys);
 
-        // Plain keys that only make sense inside the window.
+        // Keys inside the window (rebindable, see `keymap`). Capture phase, so a focused button
+        // does not swallow space; a focused list, slider or menu keeps its arrows and Enter, and a
+        // text field keeps everything without ctrl, alt or super.
         let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
         let a = app.clone();
         keys.connect_key_pressed(move |ctl, key, _, mods| {
-            let typing = ctl
-                .widget()
-                .and_then(|w| w.root())
-                .and_then(|r| r.focus())
-                .is_some_and(|f| f.is::<gtk::Text>());
-            if mods.contains(gdk::ModifierType::ALT_MASK) {
-                match key {
-                    gdk::Key::Left => a.navigate_history(-1),
-                    gdk::Key::Right => a.navigate_history(1),
-                    _ => return glib::Propagation::Proceed,
+            let Some(combo) = crate::keymap::combo(key, mods) else {
+                return glib::Propagation::Proceed;
+            };
+            if a.recording().is_some() && a.win().page() != "settings" {
+                a.set_recording(None);
+            }
+            if a.recording().is_some() {
+                match combo.as_str() {
+                    "Escape" => a.set_recording(None),
+                    "BackSpace" => a.record_key(""),
+                    c => a.record_key(c),
                 }
                 return glib::Propagation::Stop;
             }
-            if mods == gdk::ModifierType::CONTROL_MASK && !typing {
-                match key {
-                    gdk::Key::z => a.undo(),
-                    gdk::Key::f => a.focus_list_search(),
-                    _ => return glib::Propagation::Proceed,
-                }
-                return glib::Propagation::Stop;
-            }
-            if typing || !mods.is_empty() {
+            let focus = ctl.widget().and_then(|w| w.root()).and_then(|r| r.focus());
+            let inside = |t: glib::Type| focus.as_ref().is_some_and(|f| f.ancestor(t).is_some());
+            let typing = focus.as_ref().is_some_and(|f| f.is::<gtk::Text>());
+            if typing
+                && (!(crate::keymap::has_command_modifier(&combo) || crate::keymap::is_function_key(&combo))
+                    || crate::keymap::is_text_editing(&combo))
+            {
                 return glib::Propagation::Proceed;
             }
-            match key {
-                gdk::Key::space => a.command(Command::PlayPause),
-                gdk::Key::F11 => a.command(Command::ToggleLyrics),
-                gdk::Key::_1 | gdk::Key::_2 | gdk::Key::_3 | gdk::Key::_4 => {
-                    let i = (key.to_unicode().and_then(|c| c.to_digit(10)).unwrap_or(1) - 1) as usize;
-                    a.show_view(super::nav::VIEWS[i].0, true);
-                }
-                gdk::Key::b => {
-                    let collapsed = a.config.borrow().config.window.sidebar_collapsed;
-                    a.set_sidebar_collapsed(!collapsed);
-                }
-                _ => return glib::Propagation::Proceed,
+            if inside(gtk::Popover::static_type()) && !crate::keymap::has_command_modifier(&combo) {
+                return glib::Propagation::Proceed;
             }
-            glib::Propagation::Stop
+            if crate::keymap::is_navigation(&combo) {
+                let lists = [
+                    gtk::ListBox::static_type(),
+                    gtk::ListView::static_type(),
+                    gtk::GridView::static_type(),
+                    gtk::FlowBox::static_type(),
+                    gtk::ColumnView::static_type(),
+                    gtk::Range::static_type(),
+                ];
+                let activates = matches!(combo.as_str(), "Return" | "KP_Enter") && focus.is_some();
+                if activates || lists.into_iter().any(inside) {
+                    return glib::Propagation::Proceed;
+                }
+            }
+            let Some(action) = crate::keymap::action_for(&a.config.borrow().config.shortcuts.keys, &combo) else {
+                return glib::Propagation::Proceed;
+            };
+            if a.run_key(action) {
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
         });
         this.window.add_controller(keys);
         // Mouse back/forward buttons.
@@ -607,20 +670,88 @@ impl MainWindow {
         self.banner.set_reveal_child(!text.is_empty());
     }
 
-    /// A short confirmation; `undo` adds the undo button. Hides itself after a few seconds.
-    pub fn toast(&self, text: &str, undo: bool) {
-        self.toast_label.set_text(text);
-        self.toast_undo.set_visible(undo);
-        self.toast.set_reveal_child(true);
-        if let Some(id) = self.toast_timer.take() {
+    /// The keys shown in the search field and the nav rows follow the bindings.
+    pub fn set_key_hints(&self, keys: &std::collections::BTreeMap<String, String>) {
+        use crate::keymap::{Action, key_of, label};
+        let hint = |a: Action| {
+            let k = key_of(keys, a);
+            if k.is_empty() { String::new() } else { label(k) }
+        };
+        self.search_hint.set_text(&hint(Action::Search));
+        self.nav
+            .set_keys(&[Action::Home, Action::SearchView, Action::Library, Action::Releases].map(hint));
+    }
+
+    /// A short confirmation; `undo` adds the undo button. It rises in, a line along its bottom
+    /// runs down while it is shown, and it fades out after 2.2 s (6 s with undo). A new one while
+    /// it shows replaces the text with a small pulse and restarts the time. `motion` false: no
+    /// animation and no line.
+    pub fn toast(&self, text: &str, undo: bool, motion: bool) {
+        let t = &self.toast;
+        t.label.set_text(text);
+        t.undo.set_visible(undo);
+        if let Some(id) = t.timer.take() {
             id.remove();
         }
-        let (toast, timer) = (self.toast.clone(), self.toast_timer.clone());
-        let id = glib::timeout_add_local_once(std::time::Duration::from_secs(if undo { 6 } else { 3 }), move || {
-            timer.take();
-            toast.set_reveal_child(false);
+        let showing = t.root.reveals_child() && !t.root.has_css_class("rt-toast-out");
+        for c in ["rt-toast-in", "rt-toast-out"] {
+            t.root.remove_css_class(c);
+        }
+        if motion {
+            if showing {
+                // Two identical animations, so the pulse restarts on every message.
+                let (on, off) = if t.frame.has_css_class("rt-toast-bump-a") {
+                    ("rt-toast-bump-b", "rt-toast-bump-a")
+                } else {
+                    ("rt-toast-bump-a", "rt-toast-bump-b")
+                };
+                t.frame.remove_css_class(off);
+                t.frame.add_css_class(on);
+            } else {
+                t.frame.remove_css_class("rt-toast-bump-a");
+                t.frame.remove_css_class("rt-toast-bump-b");
+                t.root.add_css_class("rt-toast-in");
+            }
+        }
+        t.root.set_reveal_child(true);
+        let shown = std::time::Duration::from_millis(if undo { 6000 } else { 2200 });
+        t.line.set_visible(motion);
+        t.started.set(Some((std::time::Instant::now(), shown)));
+        t.line.queue_draw();
+        // Ten steps a second, not every frame: redrawing the overlay at the frame rate kept a
+        // software-rendered window busy enough to stall everything else while a toast showed.
+        if !t.line_timer.get() && motion {
+            t.line_timer.set(true);
+            let t2 = t.clone();
+            glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+                if t2.started.get().is_none() {
+                    t2.line_timer.set(false);
+                    return glib::ControlFlow::Break;
+                }
+                t2.line.queue_draw();
+                glib::ControlFlow::Continue
+            });
+        }
+        let t2 = t.clone();
+        let id = glib::timeout_add_local_once(shown, move || {
+            let t = &t2;
+            t.started.set(None);
+            if !motion {
+                t.root.set_reveal_child(false);
+                t.timer.take();
+                return;
+            }
+            t.root.remove_css_class("rt-toast-in");
+            t.root.add_css_class("rt-toast-out");
+            let t3 = t.clone();
+            let id = glib::timeout_add_local_once(std::time::Duration::from_millis(200), move || {
+                t3.timer.take();
+                t3.root.set_reveal_child(false);
+                t3.root.remove_css_class("rt-toast-out");
+            });
+            t.timer.set(Some(id));
         });
-        self.toast_timer.set(Some(id));
+        t.timer.set(Some(id));
     }
 
     pub fn update_playback(&self, pb: &Playback, saved: Option<bool>) {

@@ -55,10 +55,10 @@ the view in the middle, now playing and the queue on the right. The middle shows
 (greeting, "jump back in", recently played), **search** (one big field, recent searches,
 top result, songs, artists, albums, playlists), a collection from the **library**, **new releases**
 from the artists in your library (this week / month / year, all / albums / singles), **settings**
-and lyrics (`lyrics` button, `Ctrl+Y`). Keys `1`–`4` open the nav views, `B` (or `minimize`)
+and lyrics (`lyrics` button or `L`). Keys `1`–`4` open the nav views, `B` (or `minimize`)
 shrinks the left column to an icon rail with library covers, back/forward is `Alt+←/→` or the
-mouse side buttons. `▤` toggles the now-playing column, `⌁` picks a Spotify Connect device, `▭`
-turns the window into a mini player. Column widths and panel state persist.
+mouse side buttons. `queue` (or `Q`) toggles the now-playing column, `out …` picks a Spotify
+Connect device (its frame takes the accent while this computer plays), `▭` turns the window into a mini player. Column widths and panel state persist.
 
 Spotify's personalised shelves ("made for you", mixes, genres) and its "new releases" browse
 list are closed to apps in development mode, so home and new releases only show what rtify can
@@ -66,7 +66,7 @@ really fetch: your recently played songs, your library, and each artist's latest
 singles.
 
 **Settings** are a view in the main window: sections (appearance, layout, playback, lyrics,
-translation, window & system, Spotify account, global shortcuts), dependent rows marked `└`
+translation, window & system, Spotify account, shortcuts, global shortcuts), dependent rows marked `└`
 that hide while their parent is off, a filter, a reset per section, and inline validation
 (an invalid field gets a red frame and its rule replaces the description; nothing is saved
 until it is valid).
@@ -166,24 +166,33 @@ feature leave it out and need no libpulse.
 
 ## Using it
 
+Default keys in the window; every one can be changed in Settings → *shortcuts* (click a key,
+press the new one; `Esc` cancels, `Backspace` clears; a key another action had is swapped and
+remaining clashes are marked red):
+
 | | |
 | --- | --- |
-| `Ctrl+Space` / `Space` | play / pause |
-| `Ctrl+←` / `Ctrl+→` | previous (restarts the track after 3 s) / next |
+| `Space` | play / pause |
+| `N` / `Shift+N` | next / previous (restarts the track after 3 s) |
+| `←` / `→` | seek 5 s back / forward |
+| `↑` / `↓` | volume ±10 % |
+| `M` | mute / unmute (back to the previous volume) |
+| `Enter` / `P` | play the selected song / add it (or what is playing) to the last playlist |
+| `Ctrl+K` | search |
+| `1`–`4`, `Alt+←/→`, `B`, `Q`, `L` | views, back / forward, sidebar, now-playing column, lyrics |
 | `Ctrl+S` / `Ctrl+R` | shuffle / cycle repeat |
-| `Ctrl+↑` / `Ctrl+↓` | volume |
-| `Ctrl+L` | search |
-| `Ctrl+Y`, `F11` | lyrics |
+| `Ctrl+Z` / `Ctrl+F` | undo / search in the list |
 | `Ctrl+Shift+M` | compact / full window |
-| `Ctrl+,` | settings |
-| `F5` | reload theme |
-| `Ctrl+Q` | quit (closing the window only hides it) |
+| `Ctrl+,` / `F5` / `Ctrl+Q` | settings / reload theme / quit (closing the window only hides it) |
+
+Plain keys do nothing while you type in a field; a focused list or slider keeps its arrow keys
+and `Enter`.
 
 Every action is also a command-line flag that is forwarded to the running instance:
 
 ```
 rtify --toggle-window | --show | --hide | --toggle-lyrics | --play-pause | --next | --previous
-      --toggle-shuffle | --cycle-repeat | --volume-up | --volume-down | --focus-search
+      --toggle-shuffle | --cycle-repeat | --volume-up | --volume-down | --mute | --focus-search
       --toggle-compact | --reload-theme | --preferences | --quit
 rtify --background            # start without a window (what autostart uses)
 ```
@@ -202,7 +211,8 @@ get the window back with `rtify` or a shortcut.
 
 rtify registers its actions with `org.freedesktop.portal.GlobalShortcuts`
 (xdg-desktop-portal-hyprland, -kde, -gnome). Your compositor or the portal dialog decides the
-final keys; the preferred triggers live in `[shortcuts.bindings]`.
+final keys; the preferred triggers live in `[shortcuts.bindings]` and in the *global* column of
+Settings → shortcuts (media keys for play, next, previous, volume and mute by default).
 
 Without the portal, bind the CLI in Hyprland. `rtify --print-hyprland-binds lua` (Hyprland 0.55+)
 or `rtify --print-hyprland-binds conf` (hyprlang) prints:

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub const CONFIG_VERSION: u32 = 2;
+pub const CONFIG_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -273,13 +273,25 @@ impl Default for Spotify {
     }
 }
 
-/// Preferred triggers handed to the GlobalShortcuts portal. The compositor has the final say;
-/// keys are action names from `commands::Command::shortcut_actions`.
+/// Keys in the window and the preferred triggers handed to the GlobalShortcuts portal.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Shortcuts {
     pub portal: bool,
+    /// Portal triggers by action name from `commands::Command::shortcut_actions`. The
+    /// compositor has the final say.
     pub bindings: BTreeMap<String, String>,
+    /// In-window keys that differ from the defaults in `keymap` ("" = unassigned).
+    pub keys: BTreeMap<String, String>,
+}
+
+impl Shortcuts {
+    /// Global triggers added after the first release; the config migration fills them in.
+    pub const ADDED_BINDINGS: [(&'static str, &'static str); 3] = [
+        ("volume-up", "XF86AudioRaiseVolume"),
+        ("volume-down", "XF86AudioLowerVolume"),
+        ("mute", "XF86AudioMute"),
+    ];
 }
 
 impl Default for Shortcuts {
@@ -295,7 +307,12 @@ impl Default for Shortcuts {
         ];
         Self {
             portal: true,
-            bindings: bindings.into_iter().map(|(a, b)| (a.to_owned(), b.to_owned())).collect(),
+            bindings: bindings
+                .into_iter()
+                .chain(Self::ADDED_BINDINGS)
+                .map(|(a, b)| (a.to_owned(), b.to_owned()))
+                .collect(),
+            keys: BTreeMap::new(),
         }
     }
 }
