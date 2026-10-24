@@ -39,6 +39,7 @@ impl NowPlayingPanel {
         let queue = gtk::ListBox::new();
         queue.add_css_class("rt-list");
         queue.set_selection_mode(gtk::SelectionMode::None);
+        tab_leaves(&queue);
 
         let body = vbox(6);
         body.append(&frame);
@@ -112,7 +113,9 @@ impl NowPlayingPanel {
             meta.append(&ellipsized(&t.name, &["rt-small"]));
             meta.append(&ellipsized(&t.artist_names(), &["rt-dim", "rt-small"]));
             row.append(&meta);
-            self.queue.append(&row);
+            let item = gtk::ListBoxRow::builder().child(&row).build();
+            item.update_property(&[gtk::accessible::Property::Label(&format!("{}, {}", t.name, t.artist_names()))]);
+            self.queue.append(&item);
         }
     }
 }

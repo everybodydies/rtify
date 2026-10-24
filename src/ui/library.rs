@@ -176,6 +176,7 @@ impl Sidebar {
         let filter = gtk::Entry::new();
         filter.add_css_class("rt-filter");
         filter.set_placeholder_text(Some("filter"));
+        filter.update_property(&[gtk::accessible::Property::Label("Filter your library")]);
         filter.set_text(&cfg.filter);
         filter.set_hexpand(true);
         let filter_row = hbox(6);
@@ -185,6 +186,7 @@ impl Sidebar {
         let list = gtk::ListBox::new();
         list.add_css_class("rt-list");
         list.add_css_class("rt-menu-host");
+        tab_leaves(&list);
         let scroll = gtk::ScrolledWindow::builder()
             .child(&list)
             .vexpand(true)

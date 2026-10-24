@@ -142,14 +142,29 @@ struct Cached {
 /// Cached lists older than this are reloaded when revisited.
 const CACHE_TTL: Duration = Duration::from_secs(10 * 60);
 /// Long playlists load completely (for counts, search and sorting) up to this many songs.
-pub const MAX_ROWS: usize = 3000;
+pub const MAX_ROWS: usize = 20_000;
+/// Only the rows around what is shown are built, about this many at a time: thousands of rows
+/// would freeze the window for seconds and take hundreds of MB. Empty space above and below
+/// stands in for the rest, so the scrollbar still covers the whole list.
+const CHUNK: usize = 200;
+/// Rows kept built ahead of what is shown, in each direction.
+const MARGIN: usize = 60;
+/// At most this many rows stay built; the ones furthest from the view go first.
+const MAX_BUILT: usize = 3 * CHUNK;
+/// Height of a row until one has been measured.
+const ROW_HEIGHT_GUESS: f64 = 46.0;
 
 #[derive(Default)]
 pub struct ViewState {
     pub collection: Option<Collection>,
     pub rows: Vec<TrackRow>,
-    /// Table row index → index into `rows`.
+    /// Sort and in-list search applied: position in the list → index into `rows`. Only
+    /// `display[first..first + rendered]` have a row in the table.
     display: Vec<usize>,
+    first: usize,
+    rendered: usize,
+    /// Measured height of one table row (0: not yet).
+    row_height: f64,
     pub next_offset: Option<u32>,
     pub loading: bool,
     pub editable: bool,
@@ -158,6 +173,8 @@ pub struct ViewState {
     filter: String,
     /// Scroll position to restore once a reload has finished (after an edit).
     pending_scroll: Option<f64>,
+    /// The built rows are about to follow the view (from an idle callback, never during layout).
+    sync_queued: bool,
     /// Playlists/albums shown as cards (search results, artist albums).
     extra: Vec<Collection>,
     cache: HashMap<String, Cached>,
@@ -177,6 +194,10 @@ pub struct CollectionView {
     songs_title: gtk::Label,
     headers: Rc<Vec<(SortKey, gtk::Button, &'static str)>>,
     table: gtk::ListBox,
+    /// Stand-ins for the rows above and below the built ones.
+    gap_above: gtk::Box,
+    gap_below: gtk::Box,
+    content: gtk::Box,
     status: gtk::Label,
     scroll: gtk::ScrolledWindow,
     pub state: Rc<RefCell<ViewState>>,
@@ -293,6 +314,7 @@ impl CollectionView {
         table.set_selection_mode(gtk::SelectionMode::Multiple);
         table.set_activate_on_single_click(false);
         table.add_css_class("rt-menu-host");
+        tab_leaves(&table);
         let status = label("", &["rt-dim"]);
         status.set_margin_top(8);
 
@@ -309,9 +331,13 @@ impl CollectionView {
         ] {
             content.append(w);
         }
+        let gap_above = vbox(0);
+        let gap_below = vbox(0);
         let tracks_box = vbox(0);
         tracks_box.append(&head);
+        tracks_box.append(&gap_above);
         tracks_box.append(&table);
+        tracks_box.append(&gap_below);
         tracks_box.append(&status);
         content.append(&tracks_box);
         let scroll = gtk::ScrolledWindow::builder()
@@ -335,6 +361,9 @@ impl CollectionView {
             songs_title,
             headers,
             table: table.clone(),
+            gap_above,
+            gap_below,
+            content: content.clone(),
             status,
             scroll: scroll.clone(),
             state: Rc::default(),
@@ -342,7 +371,7 @@ impl CollectionView {
         };
 
         let v = this.clone();
-        table.connect_row_activated(move |_, row| v.play_from_display(row.index() as usize, false));
+        table.connect_row_activated(move |_, row| v.play_from_display(v.position(row), false));
         let v = this.clone();
         play.connect_clicked(move |_| v.play_from_display(0, false));
         let v = this.clone();
@@ -350,17 +379,39 @@ impl CollectionView {
         let v = this.clone();
         filter.connect_search_changed(move |e| {
             v.state.borrow_mut().filter = e.text().trim().to_lowercase();
-            v.table.invalidate_filter();
-            v.update_status();
+            v.render_rows();
         });
+        // The built rows follow the view.
         let v = this.clone();
-        table.set_filter_func(move |row| {
-            let st = v.state.borrow();
-            let Some(&i) = st.display.get(row.index() as usize) else {
-                return true;
+        let adj = scroll.vadjustment();
+        let follow = move |_: &gtk::Adjustment| v.schedule_sync();
+        adj.connect_value_changed(follow.clone());
+        adj.connect_page_size_notify(follow);
+        // Home and End go to the first and last song, not to the first and last row built.
+        let v = this.clone();
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        keys.connect_key_pressed(move |_, key, _, _| {
+            let to_end = match key {
+                gdk::Key::End | gdk::Key::KP_End => true,
+                gdk::Key::Home | gdk::Key::KP_Home => false,
+                _ => return glib::Propagation::Proceed,
             };
-            st.rows.get(i).is_none_or(|r| matches_filter(r, &st.filter))
+            let built = {
+                let st = v.state.borrow();
+                if to_end {
+                    st.first + st.rendered >= st.display.len()
+                } else {
+                    st.first == 0
+                }
+            };
+            if built {
+                return glib::Propagation::Proceed;
+            }
+            v.jump(to_end);
+            glib::Propagation::Stop
         });
+        table.add_controller(keys);
         for (key, b, _) in this.headers.iter() {
             let (v, key) = (this.clone(), *key);
             b.connect_clicked(move |_| {
@@ -384,7 +435,7 @@ impl CollectionView {
         middle.set_button(2);
         let v = this.clone();
         middle.connect_pressed(move |_, _, _, y| {
-            if let Some(t) = v.table.row_at_y(y as i32).and_then(|r| v.track_at(r.index() as usize)) {
+            if let Some(t) = v.table.row_at_y(y as i32).and_then(|r| v.track_at(v.position(&r))) {
                 v.app.queue_uris(vec![t.uri]);
             }
         });
@@ -432,6 +483,11 @@ impl CollectionView {
         this
     }
 
+    /// Position in the list (index into `display`) of a built row.
+    fn position(&self, row: &gtk::ListBoxRow) -> usize {
+        self.state.borrow().first + row.index().max(0) as usize
+    }
+
     fn track_at(&self, display_index: usize) -> Option<Track> {
         let st = self.state.borrow();
         st.display.get(display_index).and_then(|&i| st.rows.get(i)).map(|r| r.track.clone())
@@ -439,7 +495,7 @@ impl CollectionView {
 
     /// Selected tracks in display order.
     pub fn selected_tracks(&self) -> Vec<Track> {
-        let mut idx: Vec<usize> = self.table.selected_rows().iter().map(|r| r.index() as usize).collect();
+        let mut idx: Vec<usize> = self.table.selected_rows().iter().map(|r| self.position(r)).collect();
         idx.sort_unstable();
         idx.into_iter().filter_map(|i| self.track_at(i)).collect()
     }
@@ -447,12 +503,7 @@ impl CollectionView {
     /// Visible tracks in display order (sort and in-list search applied).
     fn visible_tracks(&self) -> Vec<Track> {
         let st = self.state.borrow();
-        st.display
-            .iter()
-            .filter_map(|&i| st.rows.get(i))
-            .filter(|r| matches_filter(r, &st.filter))
-            .map(|r| r.track.clone())
-            .collect()
+        st.display.iter().filter_map(|&i| st.rows.get(i)).map(|r| r.track.clone()).collect()
     }
 
     fn play_from_display(&self, display_index: usize, shuffle: bool) {
@@ -494,7 +545,7 @@ impl CollectionView {
         let n = uris.len();
         if n == 1 {
             let v = self.clone();
-            let i = self.table.selected_rows().first().map(|r| r.index() as usize).unwrap_or(0);
+            let i = self.table.selected_rows().first().map(|r| self.position(r)).unwrap_or(0);
             menu.item("play", move || v.play_from_display(i, false));
         }
         let (a2, u) = (a.clone(), uris.clone());
@@ -622,6 +673,8 @@ impl CollectionView {
             st.collection = Some(c.clone());
             st.rows.clear();
             st.display.clear();
+            st.first = 0;
+            st.rendered = 0;
             st.next_offset = None;
             st.loading = true;
             st.editable = editable;
@@ -643,6 +696,7 @@ impl CollectionView {
         self.state.borrow_mut().filter.clear();
         self.update_headers();
         clear_list(&self.table);
+        self.update_gaps();
     }
 
     /// Switch to `c` and clear the table; tracks arrive through `append`.
@@ -673,9 +727,7 @@ impl CollectionView {
             self.set_cards(None, Vec::new());
         }
         self.append(&c.uri, cached.rows, cached.next);
-        // Restore the scroll position once the rows have their size.
-        let (adj, y) = (self.scroll.vadjustment(), cached.scroll);
-        glib::idle_add_local_once(move || adj.set_value(y));
+        self.scroll_to(cached.scroll);
         true
     }
 
@@ -745,6 +797,13 @@ impl CollectionView {
     fn make_row(&self, number: usize, r: &TrackRow, show_added: bool, playing: Option<&str>) -> gtk::ListBoxRow {
         let t = &r.track;
         let row = gtk::ListBoxRow::new();
+        // One sentence for screen readers instead of an unnamed row.
+        row.update_property(&[gtk::accessible::Property::Label(&format!(
+            "{}, {}, {}",
+            t.name,
+            t.artist_names(),
+            fmt_time(t.duration_ms)
+        ))]);
         let b = hbox(12);
         let num = label(&number.to_string(), &["rt-faint", "rt-mono-num", "rt-row-num", "rt-small"]);
         num.set_width_chars(3);
@@ -808,24 +867,231 @@ impl CollectionView {
         row
     }
 
+    /// Rebuild the table from `rows`: sort, in-list search, then the rows around the view.
     fn render_rows(&self) {
         let selected: Vec<String> = self.selected_tracks().into_iter().map(|t| t.uri).collect();
-        let (order, rows, show_added, playing) = {
-            let st = self.state.borrow();
+        {
+            let mut st = self.state.borrow_mut();
             let order = sorted_order(&st.rows, st.sort);
-            let show_added = st.rows.iter().any(|r| !r.added_at.is_empty());
-            (order, st.rows.clone(), show_added, st.playing_uri.clone())
-        };
+            st.display = order.into_iter().filter(|&i| matches_filter(&st.rows[i], &st.filter)).collect();
+            st.first = 0;
+            st.rendered = 0;
+        }
         clear_list(&self.table);
-        for (n, &i) in order.iter().enumerate() {
-            let row = self.make_row(n + 1, &rows[i], show_added, playing.as_deref());
-            self.table.append(&row);
-            if selected.contains(&rows[i].track.uri) {
-                self.table.select_row(Some(&row));
+        self.sync_window();
+        if !selected.is_empty() {
+            let st = self.state.borrow();
+            for (n, &i) in st.display[st.first..st.first + st.rendered].iter().enumerate() {
+                if selected.contains(&st.rows[i].track.uri)
+                    && let Some(row) = self.table.row_at_index(n as i32)
+                {
+                    self.table.select_row(Some(&row));
+                }
             }
         }
-        self.state.borrow_mut().display = order;
         self.update_status();
+    }
+
+    /// Rows all have the same height: measured once, from two laid-out rows.
+    fn row_height(&self) -> f64 {
+        let known = self.state.borrow().row_height;
+        if known > 0.0 {
+            return known;
+        }
+        let (Some(a), Some(b)) = (self.table.row_at_index(0), self.table.row_at_index(1)) else {
+            return ROW_HEIGHT_GUESS;
+        };
+        let origin = gtk::graphene::Point::new(0.0, 0.0);
+        let pitch = match (a.compute_point(&self.table, &origin), b.compute_point(&self.table, &origin)) {
+            (Some(pa), Some(pb)) if a.height() > 0 => (pb.y() - pa.y()) as f64,
+            _ => 0.0,
+        };
+        if pitch < 10.0 {
+            return ROW_HEIGHT_GUESS;
+        }
+        self.state.borrow_mut().row_height = pitch;
+        pitch
+    }
+
+    /// Size the stand-ins for the rows that are not built.
+    fn update_gaps(&self) {
+        let h = self.row_height();
+        let (above, below) = {
+            let st = self.state.borrow();
+            (st.first, st.display.len() - st.first - st.rendered)
+        };
+        self.gap_above.set_size_request(-1, (above as f64 * h).round() as i32);
+        self.gap_below.set_size_request(-1, (below as f64 * h).round() as i32);
+    }
+
+    /// Positions in the list that are on screen now.
+    fn shown_range(&self) -> (usize, usize) {
+        let h = self.row_height();
+        let adj = self.scroll.vadjustment();
+        let top = self
+            .gap_above
+            .compute_point(&self.content, &gtk::graphene::Point::new(0.0, 0.0))
+            .map_or(0.0, |p| p.y() as f64);
+        let from = ((adj.value() - top) / h).floor().max(0.0) as usize;
+        let to = ((adj.value() + adj.page_size() - top) / h).ceil().max(0.0) as usize;
+        (from, to.max(from + 1))
+    }
+
+    fn build(&self, from: usize, to: usize) -> Vec<gtk::ListBoxRow> {
+        let (rows, show_added, playing) = {
+            let st = self.state.borrow();
+            let rows: Vec<TrackRow> = st.display[from..to].iter().map(|&i| st.rows[i].clone()).collect();
+            (rows, st.rows.iter().any(|r| !r.added_at.is_empty()), st.playing_uri.clone())
+        };
+        rows.iter()
+            .enumerate()
+            .map(|(k, r)| self.make_row(from + k + 1, r, show_added, playing.as_deref()))
+            .collect()
+    }
+
+    /// Build the rows around the view and drop the ones far from it.
+    fn sync_window(&self) {
+        self.state.borrow_mut().sync_queued = false;
+        let len = self.state.borrow().display.len();
+        let (first, rendered) = {
+            let st = self.state.borrow();
+            (st.first, st.rendered)
+        };
+        if len == 0 {
+            self.update_gaps();
+            return;
+        }
+        let (shown_from, shown_to) = self.shown_range();
+        let shown_from = shown_from.min(len - 1);
+        let want_from = shown_from.saturating_sub(MARGIN);
+        let want_to = (shown_to + MARGIN).min(len);
+        let end = first + rendered;
+        if rendered > 0 && want_from >= first && want_to <= end {
+            return;
+        }
+        if rendered == 0 || want_from >= end || want_to <= first {
+            // Nothing built near the view (a jump, or a new list): start over there.
+            let had_focus = self.table.focus_child().is_some();
+            clear_list(&self.table);
+            let from = want_from.min(len.saturating_sub(CHUNK));
+            let to = (from + CHUNK.max(want_to - from)).min(len);
+            for row in self.build(from, to) {
+                self.table.append(&row);
+            }
+            {
+                let mut st = self.state.borrow_mut();
+                st.first = from;
+                st.rendered = to - from;
+            }
+            // The focused row is gone: keys would go nowhere until the next click.
+            if had_focus {
+                self.focus_row_in_place(shown_from.clamp(from, to - 1) - from);
+            }
+        } else {
+            if want_to > end {
+                let to = (end + CHUNK).max(want_to).min(len);
+                for row in self.build(end, to) {
+                    self.table.append(&row);
+                }
+                self.state.borrow_mut().rendered += to - end;
+            }
+            if want_from < first {
+                let from = first.saturating_sub(CHUNK).min(want_from);
+                for row in self.build(from, first).into_iter().rev() {
+                    self.table.prepend(&row);
+                }
+                let mut st = self.state.borrow_mut();
+                st.first = from;
+                st.rendered += first - from;
+            }
+            // Drop rows far from the view, the side away from it first.
+            let (first, rendered) = {
+                let st = self.state.borrow();
+                (st.first, st.rendered)
+            };
+            if rendered > MAX_BUILT {
+                let keep_from = want_from.saturating_sub(CHUNK / 2).max(first);
+                let keep_to = (want_to + CHUNK / 2).min(first + rendered);
+                for i in (keep_to - first..rendered).rev() {
+                    if let Some(row) = self.table.row_at_index(i as i32) {
+                        self.table.remove(&row);
+                    }
+                }
+                for _ in first..keep_from {
+                    if let Some(row) = self.table.row_at_index(0) {
+                        self.table.remove(&row);
+                    }
+                }
+                let mut st = self.state.borrow_mut();
+                st.first = keep_from;
+                st.rendered = keep_to - keep_from;
+            }
+        }
+        self.update_gaps();
+    }
+
+    fn schedule_sync(&self) {
+        {
+            let mut st = self.state.borrow_mut();
+            if st.sync_queued {
+                return;
+            }
+            st.sync_queued = true;
+        }
+        let v = self.clone();
+        glib::idle_add_local_once(move || v.sync_window());
+    }
+
+    /// Home/End: scroll to the top or bottom of the whole list and focus its first or last song.
+    fn jump(&self, to_end: bool) {
+        let adj = self.scroll.vadjustment();
+        adj.set_value(if to_end { adj.upper() } else { 0.0 });
+        self.sync_window();
+        let (first, rendered, len) = {
+            let st = self.state.borrow();
+            (st.first, st.rendered, st.display.len())
+        };
+        let index = if to_end {
+            (len - 1).checked_sub(first)
+        } else {
+            0usize.checked_sub(first)
+        };
+        if let Some(index) = index.filter(|&i| i < rendered) {
+            self.focus_row_in_place(index);
+        }
+        // Once the new rows have their size, the bottom is where it will stay.
+        let v = self.clone();
+        let frames = std::cell::Cell::new(0);
+        self.table.add_tick_callback(move |_, _| {
+            frames.set(frames.get() + 1);
+            if frames.get() < 2 {
+                return glib::ControlFlow::Continue;
+            }
+            let adj = v.scroll.vadjustment();
+            adj.set_value(if to_end { adj.upper() } else { 0.0 });
+            glib::ControlFlow::Break
+        });
+    }
+
+    /// Focus a built row without scrolling to it: a row that was just built has no size yet and
+    /// counts as being at the top of the list.
+    fn focus_row_in_place(&self, index: usize) {
+        let Some(row) = self.table.row_at_index(index as i32) else { return };
+        let viewport = self.scroll.child().and_downcast::<gtk::Viewport>();
+        if let Some(vp) = &viewport {
+            vp.set_scroll_to_focus(false);
+        }
+        row.grab_focus();
+        if let Some(vp) = &viewport {
+            vp.set_scroll_to_focus(true);
+        }
+    }
+
+    /// Scroll to `y` once the list is laid out (rows built there by `sync_window`).
+    fn scroll_to(&self, y: f64) {
+        self.update_gaps();
+        let adj = self.scroll.vadjustment();
+        glib::idle_add_local_once(move || adj.set_value(y));
     }
 
     /// Append a page of rows for `uri` (ignored when the user already moved on).
@@ -834,62 +1100,43 @@ impl CollectionView {
             return;
         }
         let custom = self.state.borrow().sort.key == SortKey::Custom;
-        let (start, show_added, playing) = {
+        let start = {
             let mut st = self.state.borrow_mut();
             let start = st.rows.len();
             st.rows.extend(rows);
             st.next_offset = next.filter(|_| st.rows.len() < MAX_ROWS);
             st.loading = false;
-            (start, st.rows.iter().any(|r| !r.added_at.is_empty()), st.playing_uri.clone())
+            start
         };
         let pending = {
             let mut st = self.state.borrow_mut();
             if st.next_offset.is_none() { st.pending_scroll.take() } else { None }
         };
-        if let Some(y) = pending {
-            let adj = self.scroll.vadjustment();
-            glib::idle_add_local_once(move || adj.set_value(y));
-        }
+        let done = self.state.borrow().next_offset.is_none();
         if custom && start > 0 {
-            // Playlist order: just add the new page below.
-            let rows: Vec<TrackRow> = self.state.borrow().rows[start..].to_vec();
-            for (k, r) in rows.iter().enumerate() {
-                self.table.append(&self.make_row(start + k + 1, r, show_added, playing.as_deref()));
+            // Playlist order: the new page goes below, built when it scrolls into view.
+            {
+                let mut st = self.state.borrow_mut();
+                let fresh: Vec<usize> = (start..st.rows.len())
+                    .filter(|&i| matches_filter(&st.rows[i], &st.filter))
+                    .collect();
+                st.display.extend(fresh);
             }
-            self.state.borrow_mut().display.extend(start..start + rows.len());
+            self.update_gaps();
+            self.schedule_sync();
             self.update_status();
-        } else {
+        } else if start == 0 || done {
+            // Sorted lists are rebuilt on the first page and once everything is there.
             self.render_rows();
+        } else {
+            self.update_status();
         }
-    }
-
-    /// Number the rows the in-list search leaves visible 1, 2, 3… (all rows when it is empty).
-    fn renumber(&self) {
-        let st = self.state.borrow();
-        let mut n = 0;
-        let mut child = self.table.first_child();
-        while let Some(w) = child {
-            if let Some(row) = w.downcast_ref::<gtk::ListBoxRow>() {
-                let shown = st
-                    .display
-                    .get(row.index() as usize)
-                    .and_then(|&i| st.rows.get(i))
-                    .is_none_or(|r| matches_filter(r, &st.filter));
-                let num = row
-                    .child()
-                    .and_then(|b| b.first_child())
-                    .and_then(|l| l.downcast::<gtk::Label>().ok());
-                if shown && let Some(num) = num.filter(|l| l.has_css_class("rt-row-num")) {
-                    n += 1;
-                    num.set_text(&n.to_string());
-                }
-            }
-            child = w.next_sibling();
+        if let Some(y) = pending {
+            self.scroll_to(y);
         }
     }
 
     fn update_status(&self) {
-        self.renumber();
         let st = self.state.borrow();
         let Some(c) = &st.collection else { return };
         let total: u64 = st.rows.iter().map(|r| r.track.duration_ms).sum();
@@ -902,11 +1149,7 @@ impl CollectionView {
         } else {
             format!("{owner} · {counts}")
         });
-        let shown = if st.filter.is_empty() {
-            n
-        } else {
-            st.rows.iter().filter(|r| matches_filter(r, &st.filter)).count()
-        };
+        let shown = if st.filter.is_empty() { n } else { st.display.len() };
         self.status.set_text(&match (n, shown, st.next_offset.is_some()) {
             (0, _, _) if !st.loading => "no songs".to_owned(),
             (_, 0, _) => "no matches".to_owned(),
@@ -928,7 +1171,7 @@ impl CollectionView {
         let uris: Vec<String> = {
             let mut st = self.state.borrow_mut();
             st.playing_uri = uri.map(String::from);
-            st.display
+            st.display[st.first..st.first + st.rendered]
                 .iter()
                 .filter_map(|&i| st.rows.get(i))
                 .map(|r| r.track.uri.clone())

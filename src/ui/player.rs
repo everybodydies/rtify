@@ -94,6 +94,7 @@ impl PlayerBar {
         duration.set_width_chars(5);
         let progress = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 1000.0);
         progress.set_draw_value(false);
+        progress.update_property(&[gtk::accessible::Property::Label("Position")]);
         progress.set_hexpand(true);
         let bar = hbox(8);
         bar.append(&elapsed);
@@ -320,6 +321,9 @@ impl PlayerBar {
             }
         }
         self.play.set_label(if pb.playing { "❚❚" } else { "▶" });
+        // Screen readers say what the button does now, not "Play/Pause".
+        self.play
+            .update_property(&[gtk::accessible::Property::Label(if pb.playing { "Pause" } else { "Play" })]);
         self.shuffle.set_active(pb.shuffle);
         self.repeat.set_label(if pb.repeat == Repeat::Track { "↻1" } else { "↻" });
         if pb.repeat == Repeat::Off {
