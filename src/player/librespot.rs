@@ -87,7 +87,16 @@ async fn stopped(stop: &mut watch::Receiver<bool>) {
     let _ = stop.wait_for(|s| *s).await;
 }
 
-pub(super) async fn run(settings: Settings, login: Login, events: Events, mut stop: watch::Receiver<bool>) {
+/// `volume_dir`: where the last volume is kept between runs (none in tests).
+pub(super) async fn run(
+    settings: Settings,
+    login: Login,
+    volume_dir: Option<std::path::PathBuf>,
+    events: Events,
+    mut stop: watch::Receiver<bool>,
+) {
+    // Normally done in main(); without it rustls panics on the first connection.
+    super::install_crypto_provider();
     let mut credentials = match login {
         Login::Token(token) => Credentials::with_access_token(token),
         Login::Stored(json) => match serde_json::from_str::<Credentials>(&json) {
@@ -101,9 +110,11 @@ pub(super) async fn run(settings: Settings, login: Login, events: Events, mut st
         },
     };
     // Only the volume is cached on disk; the login goes to the Secret Service instead.
-    let cache = Cache::new(None, Some(crate::paths::state_dir().join("player")), None, None)
-        .map_err(|e| log::warn!("built-in player: no volume cache ({e})"))
-        .ok();
+    let cache = volume_dir.and_then(|dir| {
+        Cache::new(None, Some(dir), None, None)
+            .map_err(|e| log::warn!("built-in player: no volume cache ({e})"))
+            .ok()
+    });
     let session_config = SessionConfig {
         device_id: super::device_id(),
         ..SessionConfig::default()
@@ -238,6 +249,49 @@ mod tests {
         assert_eq!(bitrate(160), Bitrate::Bitrate160);
         assert_eq!(bitrate(320), Bitrate::Bitrate320);
         assert_eq!(bitrate(1000), Bitrate::Bitrate320);
+    }
+
+    async fn statuses_until_done(events: async_channel::Receiver<Event>) -> Vec<Status> {
+        let mut seen = Vec::new();
+        while let Ok(Ok(ev)) = tokio::time::timeout(Duration::from_secs(5), events.recv()).await {
+            if let Event::Status(s) = ev {
+                seen.push(s);
+            }
+        }
+        seen
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_stored_login_asks_to_sign_in_without_connecting() {
+        let (tx, rx) = async_channel::unbounded();
+        let (_stop, stopped) = watch::channel(false);
+        let settings = Settings {
+            name: "test".into(),
+            bitrate: 160,
+            normalisation: false,
+        };
+        run(settings, Login::Stored("not json".into()), None, tx, stopped).await;
+        assert_eq!(
+            statuses_until_done(rx).await,
+            [Status::SignInNeeded("the stored login is unreadable".into())]
+        );
+    }
+
+    #[tokio::test]
+    async fn stopping_while_connecting_ends_promptly_and_reports_off() {
+        let (tx, rx) = async_channel::unbounded();
+        let (stop, stopped) = watch::channel(false);
+        let settings = Settings {
+            name: "test".into(),
+            bitrate: 320,
+            normalisation: true,
+        };
+        let task = tokio::spawn(run(settings, Login::Token("not-a-token".into()), None, tx, stopped));
+        stop.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), task).await.unwrap().unwrap();
+        let seen = statuses_until_done(rx).await;
+        assert_eq!(seen.last(), Some(&Status::Off), "{seen:?}");
+        assert!(!seen.iter().any(|s| matches!(s, Status::Ready { .. } | Status::SignInNeeded(_))));
     }
 
     #[test]

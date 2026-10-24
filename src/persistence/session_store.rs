@@ -38,6 +38,8 @@ pub struct AccountSession {
     pub device_name: Option<String>,
     /// Target of "add to last playlist".
     pub last_playlist: Option<String>,
+    /// The "sign in for the built-in player" notice was shown once already.
+    pub player_hint_shown: bool,
     pub updated_at: u64,
 }
 

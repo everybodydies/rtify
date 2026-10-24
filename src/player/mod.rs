@@ -132,7 +132,8 @@ impl Handle {
             if let Some(p) = previous {
                 p.shutdown().await;
             }
-            librespot::run(settings, login, events, stopped).await
+            let volume_dir = crate::paths::state_dir().join("player");
+            librespot::run(settings, login, Some(volume_dir), events, stopped).await
         }));
         #[cfg(not(feature = "builtin-player"))]
         let task = {
@@ -163,14 +164,19 @@ pub fn backoff_secs(failures: u32) -> u64 {
     (2u64 << failures.saturating_sub(1).min(5)).min(60)
 }
 
+/// Pick rustls' process-wide crypto backend (see [`init`]); a no-op once one is installed.
+fn install_crypto_provider() {
+    #[cfg(feature = "builtin-player")]
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+}
+
 /// Process-wide setup, first thing in `main` while no other thread exists:
 /// - librespot's TLS stack pulls in both rustls crypto backends, so rustls cannot pick one by
 ///   itself and would panic on the first connection; choose the one reqwest uses.
 /// - name the PulseAudio/PipeWire stream "rtify" with the app icon (libpulse reads these
 ///   environment variables).
 pub fn init() {
-    #[cfg(feature = "builtin-player")]
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    install_crypto_provider();
     if !AVAILABLE {
         return;
     }

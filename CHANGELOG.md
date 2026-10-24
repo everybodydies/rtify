@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Built-in player: the "sign in once" notice shows once per account instead of on every start,
+  and its hints point to settings → built-in player. The device also leaves Spotify's lists
+  when the desktop session ends, not only on Quit. The player picks rustls' crypto backend
+  itself, so it cannot panic when started outside `main`.
+
 ## [0.3.0] - 2026-10-24
 
 New look and layout from the Sys24 design.

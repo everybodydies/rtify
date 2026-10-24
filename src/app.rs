@@ -197,7 +197,14 @@ pub fn run(args: Vec<String>) -> glib::ExitCode {
     });
     gtk_app.connect_command_line(|_, cmd| APP.with(|cell| cell.get().map(|app| app.command_line(cmd)).unwrap_or(glib::ExitCode::FAILURE)));
     gtk_app.connect_activate(|_| APP.with(|cell| cell.get().map(|app| app.present()).unwrap_or_default()));
-    gtk_app.connect_shutdown(|_| APP.with(|cell| cell.get().map(|app| app.flush()).unwrap_or_default()));
+    gtk_app.connect_shutdown(|_| {
+        APP.with(|cell| {
+            if let Some(app) = cell.get() {
+                app.flush();
+                app.disconnect_builtin_now();
+            }
+        })
+    });
     gtk_app.run_with_args(&args)
 }
 
@@ -381,17 +388,22 @@ impl App {
                 let _ = tokio::time::timeout(Duration::from_millis(500), handle.shutdown()).await;
             });
         }
-        // Disconnect so the device leaves Spotify's lists now, not after a server timeout.
-        if let Some(handle) = self.builtin.borrow_mut().take() {
-            rt().block_on(async move {
-                let _ = tokio::time::timeout(Duration::from_millis(1500), handle.shutdown()).await;
-            });
-        }
+        self.disconnect_builtin_now();
         self.hold.borrow_mut().take();
         if let Some(w) = self.window.get() {
             w.window.destroy();
         }
         self.gtk_app.quit();
+    }
+
+    /// The process is ending (Quit, or the desktop session logging out): disconnect the built-in
+    /// player so the device leaves Spotify's lists now, not after a server timeout.
+    fn disconnect_builtin_now(&self) {
+        if let Some(handle) = self.builtin.borrow_mut().take() {
+            rt().block_on(async move {
+                let _ = tokio::time::timeout(Duration::from_millis(1500), handle.shutdown()).await;
+            });
+        }
     }
 
     /// Persist everything now (quit, shutdown). Saves also happen as things change, so a crash or
@@ -1112,7 +1124,7 @@ impl App {
         match target {
             Some(id) => self.simple(move |c| async move { c.transfer(&id, true).await }),
             None if self.builtin_wanted() => self.notice(
-                "no Spotify device available yet — the built-in player is not ready (settings → playback)",
+                "no Spotify device available yet — the built-in player is not ready (settings → built-in player)",
                 true,
             ),
             None => self.notice("no Spotify device available — open Spotify on a phone, speaker or computer", true),
@@ -1238,10 +1250,15 @@ impl App {
                 Ok(None) if running => app.set_builtin_status(BuiltinStatus::SignInNeeded("sign in again".into())),
                 Ok(None) => {
                     app.set_builtin_status(BuiltinStatus::SignInNeeded("sign in once below".into()));
-                    app.notice(
-                        "built-in player: sign in once under settings → playback to play on this computer (or turn it off there)",
-                        false,
-                    );
+                    // Once per account; the settings section keeps saying it after that.
+                    let first = !std::mem::replace(&mut app.session.borrow_mut().account_mut(&account).player_hint_shown, true);
+                    if first {
+                        app.schedule_session_save();
+                        app.notice(
+                            "built-in player: sign in once under settings → built-in player to play on this computer (or turn it off there)",
+                            false,
+                        );
+                    }
                 }
                 Err(e) => app.set_builtin_status(BuiltinStatus::SignInNeeded(format!("Secret Service unavailable ({e})"))),
             }
@@ -1289,7 +1306,7 @@ impl App {
                     BuiltinStatus::Ready { username } => {
                         if self.account.borrow().as_deref().is_some_and(|a| a != username) {
                             self.notice(
-                                &format!("the built-in player signed in as {username}, not as this account · sign in again under settings → playback"),
+                                &format!("the built-in player signed in as {username}, not as this account · sign in again under settings → built-in player"),
                                 true,
                             );
                         }
@@ -1299,7 +1316,7 @@ impl App {
                     }
                     BuiltinStatus::SignInNeeded(why) => {
                         self.builtin.borrow_mut().take();
-                        self.notice(&format!("built-in player: {why} · settings → playback → sign in"), true);
+                        self.notice(&format!("built-in player: {why} · settings → built-in player → sign in"), true);
                     }
                     _ => {}
                 }
