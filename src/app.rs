@@ -1601,6 +1601,10 @@ impl App {
                     side.set_albums(albums);
                     side.set_artists(artists);
                     app.win().rail.set_items(&side.all());
+                    // The queue may have loaded first and missed the name it continues from.
+                    if app.playback.borrow().track.is_some() {
+                        app.refresh_queue();
+                    }
                     app.home_loaded.set(None);
                     app.releases_loaded.set(None);
                     match app.win().page().as_str() {
