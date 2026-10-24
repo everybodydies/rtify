@@ -18,12 +18,14 @@ tmp=$(mktemp -d)
 trap 'kill $(jobs -p) 2>/dev/null || true; rm -rf "$tmp"' EXIT
 
 cargo build --quiet --no-default-features --features demo
-python3 dev/demo-server.py --port "$port" >"$tmp/server.log" 2>&1 &
+# One fixed moment for rtify and the mock, so the screenshots do not depend on the clock.
+now=2026-10-24T20:15:00Z
+python3 dev/demo-server.py --port "$port" --now "$now" >"$tmp/server.log" 2>&1 &
 proxy=$((port + 1))
 python3 dev/ui/faults.py --port "$proxy" --upstream "http://127.0.0.1:$port" >"$tmp/faults.log" 2>&1 &
 for _ in $(seq 50); do curl -fs "http://127.0.0.1:$proxy/v1/me" >/dev/null 2>&1 && break; sleep 0.1; done
 
-export RTIFY_DEMO=1 RTIFY_DEMO_NOW=2026-10-24T20:15:00Z RTIFY_API_BASE="http://127.0.0.1:$proxy/v1" RTIFY_ACCOUNTS_BASE="http://127.0.0.1:$proxy"
+export RTIFY_DEMO=1 RTIFY_DEMO_NOW=$now RTIFY_API_BASE="http://127.0.0.1:$proxy/v1" RTIFY_ACCOUNTS_BASE="http://127.0.0.1:$proxy"
 export RTIFY_LRCLIB_BASE="http://127.0.0.1:$proxy" RTIFY_TRANSLATE_BASE="http://127.0.0.1:$proxy"
 export RTIFY_UI_MOCK="http://127.0.0.1:$port/v1" RTIFY_UI_FAULTS="http://127.0.0.1:$proxy/__faults"
 export RTIFY_CONFIG_DIR="$tmp/config" RTIFY_STATE_DIR="$tmp/state" XDG_CONFIG_HOME="$tmp/xdg"

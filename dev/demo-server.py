@@ -13,6 +13,7 @@ Nur Python-Standardbibliothek. Gestartet wird er normalerweise über portable.sh
 import argparse
 import base64
 import colorsys
+import datetime
 import json
 import random
 import re
@@ -191,11 +192,12 @@ def rootlist():
                                                                  items=[dict(uri=u, attributes={}) for u in uris]))
 
 
-def make_history(days=45):
-    """Plausibler Hörverlauf: abends mehr, Lieblingskünstler häufiger."""
+def make_history(days=45, now=None):
+    """Plausibler Hörverlauf: abends mehr, Lieblingskünstler häufiger. `now`: Ende des Verlaufs
+    (Standard: jetzt)."""
     r = random.Random(7)
     weights = [1 + 3 * (i % 5 == 0) + 2 * (i % 3 == 0) for i in range(len(TRACKS))]
-    now = time.time()
+    now = now or time.time()
     out = []
     for day in range(days):
         if r.random() < 0.12:
@@ -210,6 +212,7 @@ def make_history(days=45):
     return sorted(out, reverse=True)
 
 
+HISTORY_NOW = None  # --now: der Verlauf hängt nicht von der Uhrzeit des Testlaufs ab
 HISTORY = make_history()
 
 
@@ -489,7 +492,7 @@ class Handler(BaseHTTPRequestHandler):
                                        queue=[BY_URI[u] for u in upcoming if u in BY_URI]))
         if p == "/me/player/recently-played":
             # Wie bei Spotify: neueste zuerst, Blättern über ?before=<ms>
-            before = int(q.get("before", [str(int(time.time() * 1000) + 1)])[0])
+            before = int(q.get("before", [str(int((HISTORY_NOW or time.time()) * 1000) + 1)])[0])
             lim = int(q.get("limit", ["20"])[0])
             hits = [h for h in HISTORY if h[0] < before][:lim]
             items = [dict(track=BY_URI[u], played_at=time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t / 1000)) + "Z")
@@ -571,12 +574,17 @@ class Server(ThreadingHTTPServer):
 
 
 def main():
-    global BASE
+    global BASE, HISTORY_NOW
     ap = argparse.ArgumentParser(description="qtify Demo-Server")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--idle", action="store_true",
                     help="wie nach einem Neustart: kein aktives Gerät, nichts läuft")
+    ap.add_argument("--now", help="Hörverlauf endet zu diesem Zeitpunkt (ISO 8601, z. B. "
+                                   "2026-10-24T20:15:00Z), damit Screenshots gleich bleiben")
     args = ap.parse_args()
+    if args.now:
+        HISTORY_NOW = datetime.datetime.fromisoformat(args.now.replace("Z", "+00:00")).timestamp()
+        HISTORY[:] = make_history(now=HISTORY_NOW)
     if args.idle:
         for d in DEVICES:
             d["is_active"] = False
