@@ -36,29 +36,47 @@ Spotify Premium.
 ## Layout
 
 ```
-┌ ◀ ▶                      [ what do you want to play? ]              ■ you  ⚙ ▭ — ┐
-│ ─ your library ─  │ ─ playlist ─────────────────────────────  │ ─ now playing ─── │
-│ playlists albums  │ ┌────┐                                    │ ┌───────────────┐ │
-│ filter            │ │    │ Coding Nights                      │ │     cover     │ │
-│ ♥ Liked Songs     │ └────┘ Demo · 24 songs                    │ └───────────────┘ │
-│ ▣ Coding Nights   │ [▶ play] [⇄ shuffle]                      │ title / artist    │
-│ ▣ Autobahn        │ #  title            album     added  time │ next up           │
-│ …                 │ 1  ▣ Neon Rain      Midnight… 09-01  2:30 │ ▣ …               │
-├───────────────────┴───────────────────────────────────────────┴───────────────────┤
-│ ▣ title ♡             ⇄  ◀◀  [❚❚]  ▶▶  ↻   1:29 ━━━━━━━━── 3:01   lyrics ▤ ⌁ vol ━ │
-└────────────────────────────────────────────────────────────────────────────────────┘
+┌ ‹ ›             [ / search tracks, artists, albums     ctrl+k ]          20:15 settings ┐
+│ ─ nav ─── minimize ┐ ┌─ home ──────────────── 18 in library ┐ ┌─ now playing ─ playing ┐ │
+│ home             1 │ │ saturday 24 october                  │ │ ┌──────────────────┐   │ │
+│ search           2 │ │ good evening                         │ │ │      cover       │   │ │
+│ library          3 │ │ ─ jump back in ───────────────────── │ │ └──────────────────┘   │ │
+│ new releases     4 │ │ ▣ Liked Songs   ▣ Coding Nights      │ │ title ♡ / artist       │ │
+│ ─ library ─────────┤ │ ─ recently played ────────────────── │ ├─ queue ──── 19 queued ─┤ │
+│ playlists albums … │ │ ┌───┐ ┌───┐ ┌───┐ ┌───┐              │ │ 1 ▣ Late Night Diner   │ │
+│ ♥ Liked Songs      │ │ └───┘ └───┘ └───┘ └───┘              │ │ 2 ▣ Blaue Stunde       │ │
+├─ player ───────────┴─┴──────────────────────────────────────┴─┴────────────────────────┤
+│ ▣ title ♡             ⇄  ◀◀  [❚❚]  ▶▶  ↻   1:29 ━━━━━━━━── 3:01   lyrics ▤ ⌁ vol ━     │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The middle switches between collections, search results and lyrics (`lyrics` button, `Ctrl+Y`),
-with back/forward (`Alt+←/→`, mouse side buttons). `▤` toggles the now-playing panel, `⌁` picks a
-Spotify Connect device, `▭` turns the window into a mini player. The sidebar width and panel state
-persist.
+Three columns with draggable dividers (double-click resets them): nav and library on the left,
+the view in the middle, now playing and the queue on the right. The middle shows **home**
+(greeting, "jump back in", recently played), **search** (one big field, recent searches,
+top result, songs, artists, albums, playlists), a collection from the **library**, **new releases**
+from the artists in your library (this week / month / year, all / albums / singles), **settings**
+and lyrics (`lyrics` button, `Ctrl+Y`). Keys `1`–`4` open the nav views, `B` (or `minimize`)
+shrinks the left column to an icon rail with library covers, back/forward is `Alt+←/→` or the
+mouse side buttons. `▤` toggles the now-playing column, `⌁` picks a Spotify Connect device, `▭`
+turns the window into a mini player. Column widths and panel state persist.
+
+Spotify's personalised shelves ("made for you", mixes, genres) and its "new releases" browse
+list are closed to apps in development mode, so home and new releases only show what rtify can
+really fetch: your recently played songs, your library, and each artist's latest albums and
+singles.
+
+**Settings** are a view in the main window: sections (appearance, layout, playback, lyrics,
+translation, window & system, Spotify account, global shortcuts), dependent rows marked `└`
+that hide while their parent is off, a filter, a reset per section, and inline validation
+(an invalid field gets a red frame and its rule replaces the description; nothing is saved
+until it is valid).
 
 **OLED black** (Settings → appearance, on by default) is the look described in
-[DESIGN.md](DESIGN.md), "system24 OLED": true-black panels and gaps, structure only from 2px
-frames with a lowercase label in the top line, achromatic OKLCH greys with text capped at 90 %
-lightness, and one pastel accent for focus, hover and the primary button. Only the accent's hue
-follows the palette source (fixed, Noctalia or album art). The typeface, DM Mono, is bundled.
+[DESIGN.md](DESIGN.md), "system24 OLED": true-black panels and gaps, structure only from 1px
+frames with a lowercase accent label in the top line, achromatic OKLCH greys with text capped at
+96 % lightness (never pure white), and one pastel mint accent (`#9bd4c9`) for labels, focus, hover
+and the primary button. Only the accent's hue follows the palette source (fixed, Noctalia or
+album art). The typeface, DM Mono, is bundled.
 
 ## Install
 
@@ -129,8 +147,8 @@ a config file. Without a running Secret Service you have to sign in again after 
 
 ### Built-in player (once)
 
-Settings → playback → *built-in player* (on by default) → **sign in**. A browser tab asks you to
-allow Spotify playback once more: Spotify's streaming servers only take logins from Spotify's own
+Settings → *built-in player* → *play on this computer* (on by default) → **sign in**. A browser
+tab asks you to allow Spotify playback once more: Spotify's streaming servers only take logins from Spotify's own
 desktop client ID (librespot, spotifyd and ncspot sign in the same way), so this login uses that
 client with the single scope `streaming`, not your app. rtify keeps the reusable credentials that
 login returns in the Secret Service and never needs the browser for it again.
@@ -298,7 +316,7 @@ src/
 ├── desktop/               tray (ksni), shortcuts (portal), MPRIS, lifecycle (autostart)
 ├── services/              playback state + reconnect plan, adaptive polling, artwork cache
 ├── spotify/               PKCE auth, Web API client, models, Secret Service tokens
-└── ui/                    window, player, library, preferences, lyrics/{view,layout,animations}
+└── ui/                    window, nav, home, search, releases, player, library, preferences (settings view), lyrics/{view,layout,animations}
 ```
 
 `cargo test` covers the parsers, romanizers, timing, persistence/migrations, contrast, polling,

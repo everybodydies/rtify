@@ -55,6 +55,11 @@
   </supports>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.3.0" date="2026-10-24">
+      <description>
+        <p>New look and layout: mint accent, three resizable columns, home, search and new releases views, settings inside the main window.</p>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-10-24">
       <description>
         <p>Built-in player: rtify plays on this computer as a Spotify Connect device of its own.</p>

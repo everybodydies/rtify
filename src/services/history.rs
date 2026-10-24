@@ -45,6 +45,17 @@ impl<T: Clone + PartialEq> History<T> {
         Some(self.entries[self.pos].clone())
     }
 
+    /// Update the current entry in place (a search refined while typing), or record it when
+    /// the history is empty. Forward entries stay.
+    pub fn replace_current(&mut self, entry: T) {
+        match self.entries.get_mut(self.pos) {
+            Some(e) => *e = entry,
+            None => {
+                self.push(entry);
+            }
+        }
+    }
+
     pub fn current(&self) -> Option<&T> {
         self.entries.get(self.pos)
     }
@@ -144,6 +155,18 @@ mod tests {
             newest = Some(p);
         }
         assert_eq!(newest.as_deref(), Some(pages.last().unwrap().as_str()));
+    }
+
+    #[test]
+    fn refining_the_current_entry_replaces_it() {
+        let mut h = visited(&["a", "b"]);
+        h.replace_current("b2");
+        assert_eq!(h.len(), 2);
+        assert_eq!(h.go(-1), Some("a"));
+        assert_eq!(h.go(1), Some("b2"));
+        let mut empty = History::default();
+        empty.replace_current("x");
+        assert_eq!(empty.current(), Some(&"x"));
     }
 
     #[test]

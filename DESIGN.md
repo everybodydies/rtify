@@ -5,52 +5,52 @@ description: >
   TUI-inspiriertes Dark-UI nach dem Vorbild des Discord-Themes "system24" von refact0r,
   optimiert für OLED-Displays: echtes Schwarz als Fläche, Struktur ausschließlich über Rahmen,
   gedimmte Texthelligkeit gegen Blooming und Burn-in. Monospace-Schrift, eckige Panels mit
-  Rahmen-Labels, achromatische Graustufen in OKLCH und ein einzelner Pastell-Akzent in Violett.
+  Rahmen-Labels, achromatische Graustufen in OKLCH und ein einzelner Pastell-Akzent in Mint.
 
 colors:
   # Rolle
-  primary: "oklch(70% 0.12 310)"          # = accent-2, #B589D6
+  primary: "oklch(83% 0.06 182)"          # = accent-2, #9BD4C9
   neutral: "oklch(0% 0 0)"                # = bg-4,     #000000
 
   # Text (hell → dunkel) – bewusst unter Reinweiß
   text-0: "oklch(0% 0 0)"                 # Text auf farbigen Flächen, #000000
-  text-1: "oklch(90% 0 0)"                # hellster Text, Auswahl, #DEDEDE
-  text-2: "oklch(82% 0 0)"                # Überschriften, wichtiger Text, #C4C4C4
-  text-3: "oklch(72% 0 0)"                # Fließtext, #A4A4A4
-  text-4: "oklch(58% 0 0)"                # Icons, Listeneinträge, Labels, #7A7A7A
-  text-5: "oklch(42% 0 0)"                # gedämpft: Zeitstempel, stumme Einträge, #4D4D4D
+  text-1: "oklch(96% 0 0)"                # hellster Text, Auswahl, #F0F0F0
+  text-2: "oklch(92% 0 0)"                # Überschriften, wichtiger Text, #E6E6E6
+  text-3: "oklch(71% 0 0)"                # Fließtext, #A0A0A0
+  text-4: "oklch(63% 0 0)"                # Icons, Listeneinträge, Labels, #8A8A8A
+  text-5: "oklch(42% 0 0)"                # nur dekorativ: Platzhalter, #4D4D4D
 
   # Hintergründe
-  bg-1: "oklch(27% 0 0)"                  # Buttons gedrückt/hover, #262626
-  bg-2: "oklch(22% 0 0)"                  # Buttons, #1B1B1B
+  bg-1: "oklch(24% 0 0)"                  # Buttons gedrückt/hover, #1F1F1F
+  bg-2: "oklch(19% 0 0)"                  # Buttons, #141414
   bg-3: "oklch(0% 0 0)"                   # Basisebene / Gaps / Popouts, #000000
   bg-4: "oklch(0% 0 0)"                   # Panel-Fläche, #000000
 
   # Zustände – deckend, nie dunkler als L 18 % (Anti-Smearing)
-  hover: "oklch(18% 0 0)"                 # ≈ #121212
-  active: "oklch(23% 0 0)"                # ≈ #1D1D1D
-  active-2: "oklch(27% 0 0)"              # ≈ #262626
+  hover: "oklch(19% 0 0)"                 # ≈ #141414
+  active: "oklch(24% 0 0)"                # ≈ #1F1F1F
+  active-2: "oklch(29% 0 0)"              # ≈ #2A2A2A
 
   # Rahmen – tragen auf OLED die gesamte Struktur
-  border-light: "oklch(22% 0 0)"          # interne Trennlinien, ≈ #1B1B1B
-  border: "oklch(30% 0 0)"                # Panel-Rahmen, ≈ #2D2D2D
-  border-hover: "oklch(70% 0.12 310)"     # = accent-2
-  button-border: "oklch(32% 0 0)"         # #333333
+  border-light: "oklch(19% 0 0)"          # interne Trennlinien, ≈ #141414
+  border: "oklch(29% 0 0)"                # Panel-Rahmen, ≈ #2A2A2A
+  border-hover: "oklch(83% 0.06 182)"     # = accent-2
+  button-border: "oklch(29% 0 0)"         # #2A2A2A
 
-  # Akzent (Violett, Hue 310)
-  accent-1: "oklch(75% 0.12 310)"         # Links, Akzenttext, #C598E7
-  accent-2: "oklch(70% 0.12 310)"         # kleine Akzentelemente, Hover-Rahmen, #B589D6
-  accent-3: "oklch(65% 0.12 310)"         # Akzent-Buttons, #A679C6
-  accent-4: "oklch(60% 0.12 310)"         # Akzent-Buttons Hover, #966AB5
-  accent-5: "oklch(55% 0.12 310)"         # nur dekorativ (Schwarz darauf < 4.5:1), #875CA5
-  accent-new: "oklch(70% 0.13 0)"         # "Neu"/Warn-Akzent (= red-2), #DF7A9B
+  # Akzent (Mint, Hue 182)
+  accent-1: "oklch(88% 0.06 182)"         # Links, Akzenttext hell, #B5E2D9
+  accent-2: "oklch(83% 0.06 182)"         # Signalton: Panel-Labels, Fokus, Hover, #9BD4C9
+  accent-3: "oklch(78% 0.06 182)"         # Akzent-Buttons, #87C4B9
+  accent-4: "oklch(73% 0.06 182)"         # Akzent-Buttons Hover, #73B4A9
+  accent-5: "oklch(68% 0.06 182)"         # nur dekorativ, #5FA499
+  accent-new: "oklch(78% 0.09 19)"        # "Neu"/Warn-Akzent, Validierung, #E8A0A0
 
   # Status
   online: "oklch(70% 0.12 170)"           # green-2, #3BB693
   idle: "oklch(75% 0.12 90)"              # yellow-2, #CBAA4B
-  dnd: "oklch(70% 0.13 0)"                # red-2, #DF7A9B
-  streaming: "oklch(70% 0.12 310)"        # purple-2, #B589D6
-  offline: "oklch(58% 0 0)"               # text-4, #7A7A7A
+  dnd: "oklch(78% 0.09 19)"               # accent-new, #E8A0A0
+  streaming: "oklch(83% 0.06 182)"        # accent-2, #9BD4C9
+  offline: "oklch(63% 0 0)"               # text-4, #8A8A8A
 
   # Basispalette (gleiche Helligkeitsstufen, nur Hue wechselt)
   red-1: "oklch(75% 0.13 0)"
@@ -132,7 +132,7 @@ spacing:
   gap: 12px
   lg: 16px
   xl: 24px
-  border: 2px
+  border: 1px
   divider: 4px
 
 components:
@@ -243,7 +243,7 @@ Charakter in drei Worten: **ruhig, technisch, präzise.**
 - Alles ist **monospace** (DM Mono).
 - **Keine Rundungen**, keine Schatten, keine Verläufe als Flächenfüllung.
 - Farbe ist fast vollständig **achromatisch**; ein einziger gedämpfter Pastell-Akzent
-  (Violett) markiert Interaktion und Fokus.
+  (Mint) markiert Interaktion und Fokus.
 - Verspielte Details kommen aus der Terminal-Welt: ASCII-Titel, ASCII-Ladeanimation,
   Fortschrittsbalken aus Textzeichen.
 
@@ -253,7 +253,7 @@ Das Original ist ein Discord-Theme; die Regeln hier gelten für jede App mit Pan
 ## Colors
 
 Die Palette ist in **OKLCH** definiert. Alle Grautöne haben Chroma 0, und alle Akzentfarben
-liegen auf **identischen Helligkeitsstufen** (75 / 70 / 65 / 60 / 55 %). Der Akzent lässt sich
+liegen auf **identischen Helligkeitsstufen** (88 / 83 / 78 / 73 / 68 %). Der Akzent lässt sich
 also durch reinen Hue-Tausch wechseln, ohne dass Kontraste kippen.
 
 ### Flächen
@@ -262,11 +262,11 @@ also durch reinen Hue-Tausch wechseln, ohne dass Kontraste kippen.
 |:--|:--|:--|:--|
 | `bg-4` | `oklch(0% 0 0)` | `#000000` | Panel-Fläche |
 | `bg-3` | `oklch(0% 0 0)` | `#000000` | Basisebene, Gaps, Popouts, Menüs |
-| `bg-2` | `oklch(22% 0 0)` | `#1B1B1B` | neutrale Buttons (kleine Flächen) |
-| `bg-1` | `oklch(27% 0 0)` | `#262626` | Buttons hover/gedrückt |
-| `hover` | `oklch(18% 0 0)` | `#121212` | Listeneintrag/Nachricht hover |
-| `active` | `oklch(23% 0 0)` | `#1D1D1D` | ausgewählt |
-| `active-2` | `oklch(27% 0 0)` | `#262626` | Zusatzzustand (z. B. gedrückt auf Auswahl) |
+| `bg-2` | `oklch(19% 0 0)` | `#141414` | neutrale Buttons (kleine Flächen) |
+| `bg-1` | `oklch(24% 0 0)` | `#1F1F1F` | Buttons hover/gedrückt |
+| `hover` | `oklch(19% 0 0)` | `#141414` | Listeneintrag/Nachricht hover |
+| `active` | `oklch(24% 0 0)` | `#1F1F1F` | ausgewählt |
+| `active-2` | `oklch(29% 0 0)` | `#2A2A2A` | Zusatzzustand (z. B. gedrückt auf Auswahl) |
 
 Panels und Gaps sind beide schwarz. Was im Original über den Tonwertunterschied
 `bg-3`/`bg-4` lief, übernehmen hier die **Rahmen**.
@@ -281,49 +281,51 @@ deckend definiert statt als transparente Overlays.
 
 | Token | Wert | Hex ≈ | Verwendung |
 |:--|:--|:--|:--|
-| `text-1` | `oklch(90% 0 0)` | `#DEDEDE` | hellster Text, ausgewählte Einträge |
-| `text-2` | `oklch(82% 0 0)` | `#C4C4C4` | Überschriften, Namen, wichtige Labels |
-| `text-3` | `oklch(72% 0 0)` | `#A4A4A4` | Standard-Fließtext |
-| `text-4` | `oklch(58% 0 0)` | `#7A7A7A` | Icons, Listeneinträge, Panel-Labels |
-| `text-5` | `oklch(42% 0 0)` | `#4D4D4D` | Zeitstempel, stummgeschaltete Einträge |
+| `text-1` | `oklch(96% 0 0)` | `#F0F0F0` | hellster Text, Titel, ausgewählte Einträge |
+| `text-2` | `oklch(92% 0 0)` | `#E6E6E6` | Namen, wichtige Labels |
+| `text-3` | `oklch(71% 0 0)` | `#A0A0A0` | Standard-Fließtext, Beschreibungen |
+| `text-4` | `oklch(63% 0 0)` | `#8A8A8A` | Meta, Zeitstempel, Panel-Meta |
+| `text-5` | `oklch(42% 0 0)` | `#4D4D4D` | nur dekorativ, Platzhalter |
 | `text-0` | = `bg-4` | `#000000` | Text auf Akzent- oder Statusflächen |
 
 **Kein Reinweiß.** Heller Text auf echtem Schwarz überstrahlt auf OLED (Halation und
-Blooming, besonders bei Astigmatismus). Darum ist `text-1` auf 90 % gedeckelt, und Fließtext
-liegt bei 72 %.
+Blooming, besonders bei Astigmatismus). Darum ist `text-1` auf 96 % gedeckelt und bleibt
+kleinen Titeln vorbehalten; Fließtext liegt bei 71 %, Meta bei 63 %. Große Flächen Text
+(Listen, Beschreibungen) nutzen nie `text-1`.
 
 ### Rahmen
 
 | Token | Wert | Verwendung |
 |:--|:--|:--|
-| `border` | `oklch(30% 0 0)` ≈ `#2D2D2D` | Panel-Rahmen (2 px) |
-| `border-light` | `oklch(22% 0 0)` ≈ `#1B1B1B` | Trennlinien innerhalb von Panels (1 px) |
-| `button-border` | `oklch(32% 0 0)` = `#333333` | Buttons, Inputs |
-| `border-hover` | = `accent-2` | Hover/Fokus von Panels |
+| `border` | `oklch(29% 0 0)` ≈ `#2A2A2A` | Panel-Rahmen (1 px), Buttons, Inputs |
+| `border-light` | `oklch(19% 0 0)` ≈ `#141414` | Trennlinien innerhalb von Panels (1 px) |
+| `button-border` | = `border` | Buttons, Inputs |
+| `border-hover` | = `accent-2` | Hover/Fokus von Panels und Buttons |
 
 Rahmen sind **deckend** statt transparent, damit sie auf Schwarz zuverlässig sichtbar bleiben.
 Sie bleiben trotzdem dunkel: Statische Linien brennen auf OLED am ehesten ein.
 
 ### Akzent
 
-- **Violett, Hue 310** (`accent-1` … `accent-5`). `accent-2` ist der Signalton: Hover-Rahmen
-  von Panels, Fokus, kleine Marker, Erwähnungen.
-- **`accent-new` (Rosa-Rot, Hue 0)** für alles, was sonst rot wäre: Unread-Divider,
-  Mute/Deafen, Badges, destruktive Aktionen.
+- **Mint, Hue 182** (`accent-1` … `accent-5`). `accent-2` ist der Signalton: Panel-Labels,
+  Hover-Rahmen, Fokus, kleine Marker, primäre Aktion.
+- **`accent-new` (Rosa-Rot, Hue 19)** für alles, was sonst rot wäre: ungültige Eingaben,
+  Mute, Badges, destruktive Aktionen.
 - **Erwähnungen/Antworten** werden mit einem horizontalen Verlauf von links hinterlegt:
   `linear-gradient(to right, color-mix(in oklch, var(--accent-2), transparent 85%) 40%, transparent)`.
   Für Antworten dieselbe Formel mit `text-3`. Der Verlauf endet in Transparenz, also in Schwarz.
-- Die Pastelltöne (Chroma ≈ 0.12) sind für OLED ideal: Sie leuchten auf Schwarz klar, ohne
-  zu flimmern wie gesättigte Neonfarben.
+- Die Pastelltöne (Chroma ≤ 0.06 für den Akzent) sind für OLED ideal: Sie leuchten auf
+  Schwarz klar, ohne zu flimmern wie gesättigte Neonfarben.
 
 ### Status
 
-`online` grün (170), `idle` gelb (90), `dnd` rot (0), `streaming` = Akzent, `offline` = `text-4`.
+`online` grün (170), `idle` gelb (90), `dnd` = `accent-new`, `streaming` = Akzent,
+`offline` = `text-4`.
 
 ### Theming-Regel
 
 Für eine andere Akzentfarbe nur den Hue der `accent-*`-Tokens ändern (z. B. 215 für Blau,
-170 für Grün). L und C bleiben unverändert.
+310 für Violett). L und C bleiben unverändert, damit Kontraste nicht kippen.
 
 ## Typography
 
@@ -381,8 +383,8 @@ durch Linien:
 
 - **Radius 0 – überall.** Panels, Buttons, Inputs, Menüs, Tooltips, Bilder, Avatare.
 - **Avatare quadratisch**, ohne Dekorationsrahmen.
-- **Linienstärken:** `2px` für Panel-Rahmen, `1px` für Buttons, Inputs und Trennlinien
-  innerhalb von Panels, `4px` für Unread-Divider und die Akzentleiste hervorgehobener Nachrichten.
+- **Linienstärken:** `1px` für Panel-Rahmen, Buttons, Inputs und Trennlinien innerhalb von
+  Panels, `2px` für Fokus-Outlines, `4px` für Divider und Akzentleisten.
 - **Statusindikatoren** als kleine Quadrate (8 px) statt Kreise.
 - Icons: schlichte Linien-Icons in `text-4`; wo es passt, durch Textzeichen ersetzen
   (`>`, `#`, `@`, `+`, `×`, `•`).
@@ -390,7 +392,7 @@ durch Linien:
 ## Components
 
 ### Panel
-Rechteckiger Container: Fläche `bg-4` (Schwarz), `2px solid var(--border)`, Radius 0,
+Rechteckiger Container: Fläche `bg-4` (Schwarz), `1px solid var(--border)`, Radius 0,
 Innenabstand 8 px. Hover/Fokus → Rahmen `accent-2` (0.2 s ease). Panels scrollen intern;
 Scrollbars schmal (4–6 px), eckig, Thumb in `active`, Track transparent.
 Scrollbars **nur beim Scrollen oder Hover einblenden**, weil dauerhaft sichtbare Thumbs
@@ -401,11 +403,12 @@ Das Markenzeichen von system24. Ein kurzes Label in Kleinschreibung sitzt **im o
 des Panels, linksbündig, und unterbricht die Linie, wie ein Fieldset-`legend` oder ein
 TUI-Fenstertitel.
 
-- Typografie `label` (12 px, 500), Farbe `text-4`.
+- Typografie `label` (12 px, 500), Farbe `accent-2`.
 - Position: `position: absolute; top: 0; left: 1ch; transform: translateY(-50%)`.
 - Hintergrund Schwarz (`bg-4`) mit `padding: 0 0.5ch`, damit der Rahmen
   hinter dem Text verschwindet.
-- Beim Hover färbt sich das Label zusammen mit dem Rahmen in `accent-2`.
+- Rechts auf derselben Linie dürfen ein Meta-Text in `text-4` und kleine gerahmte Buttons
+  sitzen (z. B. `minimize`), nach demselben Prinzip in den Rahmen gesetzt.
 
 ### Listeneintrag (Kanäle, Dateien, Menüpunkte)
 Text `text-4`, Hover → Hintergrund `hover` + Text `text-3`, ausgewählt → `active` + `text-1`.
@@ -471,25 +474,26 @@ Eckige Kästchen, `accent-new` mit `text-0`, Typografie `label`.
 - Keine fast-schwarzen Grautöne zwischen L 1 % und 17 % (Smearing, Banding).
 - Kein Reinweiß (`#FFFFFF`), weder für Text noch für Flächen.
 - Keine großen hellen Flächen: keine hellen Header, Banner oder vollflächigen Akzentblöcke.
-- Keine dauerhaft sichtbaren hellen statischen Elemente (Logos, Badges, Rahmen in `text-2`
-  oder heller). Statische Elemente bleiben dunkel und neutral.
+- Keine dauerhaft sichtbaren hellen statischen Flächen (Logos, Badges, Rahmen in `text-2`
+  oder heller). Statische Rahmen bleiben dunkel und neutral; `text-1` nur für kurze Titel.
 - Kein Blur, kein Glas, keine transparenten Panels.
 - Keine abgerundeten Ecken, keine runden Avatare, keine Pillen-Buttons.
 - Keine Schatten, kein Glow, keine Neumorphismus-Effekte.
 - Keine proportionalen Schriften, auch nicht für Überschriften.
-- Keine gesättigten Neonfarben; der Akzent bleibt pastellig (Chroma ≈ 0.12).
+- Keine gesättigten Neonfarben; der Akzent bleibt pastellig (Chroma ≤ 0.145).
 - `text-5` nicht für wichtige Informationen verwenden, da der Kontrast nur ≈ 2.5:1 beträgt.
 
 ## OLED-Regeln
 
 1. **Pixel aus ist der Normalzustand.** Schwarz ist der Default für jede Fläche. Helligkeit
    ist ein Signal und kein Hintergrund.
-2. **Burn-in-Schutz:** Alles, was dauerhaft an derselben Stelle steht (Rahmen, Labels,
-   Seitenleisten-Icons, Statuszeile), bleibt bei L ≤ 60 % und neutral grau. Helle und farbige
-   Töne erscheinen nur temporär (Hover, Fokus, neue Inhalte).
+2. **Burn-in-Schutz:** Alles, was dauerhaft an derselben Stelle steht (Rahmen, Icons,
+   Statuszeile), bleibt neutral grau; Panel-Labels im Akzent sind klein und dünn. Große
+   helle Flächen erscheinen nur temporär (Hover, Fokus, neue Inhalte).
 3. **Anti-Smearing:** Nicht-schwarze Flächen haben L ≥ 18 %. Keine Verläufe, die über
    größere Flächen von Schwarz in sehr dunkles Grau laufen.
-4. **Anti-Blooming:** Text maximal L 90 %, Schriftgewicht ≥ 400 für Fließtext.
+4. **Anti-Blooming:** Text maximal L 96 % und nie Reinweiß, Schriftgewicht ≥ 400 für
+   Fließtext. Lange Texte bleiben bei L ≤ 92 %.
 5. **Energie:** Die hellste Fläche im UI ist der primäre Akzent-Button. Es gibt keine
    zweite gleich helle Fläche.
 6. **Optional „Ultra“-Modus:** `hover`/`active` als reine Linien (linke `2px`-Leiste
@@ -497,10 +501,10 @@ Eckige Kästchen, `accent-new` mit `text-0`, Typografie `label`.
 
 ## Barrierefreiheit
 
-Kontrast auf Schwarz (WCAG): `text-1` 15.6:1 · `text-2` 12.0:1 · `text-3` 8.5:1 ·
-`text-4` 4.9:1 · `accent-2` 7.5:1 · `accent-new` 7.4:1 · `text-5` 2.5:1 (nur dekorativ/Meta).
-Auf `active` (`#1D1D1D`) bleibt `text-1` bei ≈ 13:1. Akzent-Buttons mit Schwarz auf
-`accent-3`: 6.2:1. Fokus muss immer sichtbar sein (`outline: 2px solid var(--accent-2)`),
+Kontrast auf Schwarz (WCAG): `text-1` 18.4:1 · `text-2` 16.8:1 · `text-3` 8.0:1 ·
+`text-4` 6.1:1 · `accent-2` 12.7:1 · `accent-new` 10.0:1 · `text-5` 2.5:1 (nur dekorativ).
+Auf `active` (`#1F1F1F`) bleibt `text-1` bei ≈ 15:1. Akzent-Buttons mit Schwarz auf
+`accent-2`: 12.7:1. Fokus muss immer sichtbar sein (`outline: 2px solid var(--accent-2)`),
 nicht nur über Hover.
 
 ## CSS-Referenz
@@ -512,38 +516,38 @@ nicht nur über Hover.
   color-scheme: dark;
   --font: 'DM Mono', ui-monospace, monospace;
   --gap: 12px;
-  --border-thickness: 2px;
+  --border-thickness: 1px;
   --divider-thickness: 4px;
   --transition: 0.2s ease;
 
   --text-0: oklch(0% 0 0);
-  --text-1: oklch(90% 0 0);
-  --text-2: oklch(82% 0 0);
-  --text-3: oklch(72% 0 0);
-  --text-4: oklch(58% 0 0);
+  --text-1: oklch(96% 0 0);
+  --text-2: oklch(92% 0 0);
+  --text-3: oklch(71% 0 0);
+  --text-4: oklch(63% 0 0);
   --text-5: oklch(42% 0 0);
 
-  --bg-1: oklch(27% 0 0);
-  --bg-2: oklch(22% 0 0);
+  --bg-1: oklch(24% 0 0);
+  --bg-2: oklch(19% 0 0);
   --bg-3: oklch(0% 0 0);
   --bg-4: oklch(0% 0 0);
 
-  --hover: oklch(18% 0 0);
-  --active: oklch(23% 0 0);
-  --active-2: oklch(27% 0 0);
+  --hover: oklch(19% 0 0);
+  --active: oklch(24% 0 0);
+  --active-2: oklch(29% 0 0);
 
-  --accent-hue: 310;
-  --accent-1: oklch(75% 0.12 var(--accent-hue));
-  --accent-2: oklch(70% 0.12 var(--accent-hue));
-  --accent-3: oklch(65% 0.12 var(--accent-hue));
-  --accent-4: oklch(60% 0.12 var(--accent-hue));
-  --accent-5: oklch(55% 0.12 var(--accent-hue));
-  --accent-new: oklch(70% 0.13 0);
+  --accent-hue: 182;
+  --accent-1: oklch(88% 0.06 var(--accent-hue));
+  --accent-2: oklch(83% 0.06 var(--accent-hue));
+  --accent-3: oklch(78% 0.06 var(--accent-hue));
+  --accent-4: oklch(73% 0.06 var(--accent-hue));
+  --accent-5: oklch(68% 0.06 var(--accent-hue));
+  --accent-new: oklch(78% 0.09 19);
 
-  --border-light: oklch(22% 0 0);
-  --border: oklch(30% 0 0);
+  --border-light: oklch(19% 0 0);
+  --border: oklch(29% 0 0);
   --border-hover: var(--accent-2);
-  --button-border: oklch(32% 0 0);
+  --button-border: var(--border);
 }
 
 body {
@@ -577,14 +581,12 @@ body {
   transform: translateY(-50%);
   padding: 0 0.5ch;
   background: var(--bg-4);
-  color: var(--text-4);
+  color: var(--accent-2);
   font-size: 0.75rem;
   font-weight: 500;
   line-height: 1;
   transition: color var(--transition);
 }
-.panel[data-label]:hover::before,
-.panel[data-label]:focus-within::before { color: var(--accent-2); }
 
 .list-item[aria-selected="true"] {
   background: var(--active);

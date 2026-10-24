@@ -151,6 +151,10 @@ mod tests {
         fs::write(&p, "[window]\nstart_hidden = true\n").unwrap();
         let s = ConfigStore::load(&p);
         assert!(s.config.window.start_hidden);
-        assert!(fs::read_to_string(&p).unwrap().contains("version = 1"));
+        assert!(
+            fs::read_to_string(&p)
+                .unwrap()
+                .contains(&format!("version = {}", crate::config::CONFIG_VERSION))
+        );
     }
 }

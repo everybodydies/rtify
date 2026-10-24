@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-24
+
+New look and layout from the Sys24 design.
+
+- Prototype look: pastel mint accent (`#9bd4c9`), 1px panel frames with the label in the accent
+  and meta text or small buttons on the right of the same line, text up to `#f0f0f0`. Configs
+  that still had the old default accent (`#b589d6`) or font size 11 move to the new defaults
+  (config version 2). DESIGN.md follows.
+- Three columns with draggable, persisted dividers (double-click resets); the left column
+  shrinks to an icon rail with library covers (`B` or `minimize`); the right column holds
+  now playing (cover, like, device) and the queue ("next from …").
+- Top bar: back/forward, one search field (hidden on the search view), clock, settings.
+- New views: home (greeting, "jump back in", recently played; double-click plays), search
+  (big field, recent searches, top result, songs, artists, albums, playlists), new releases
+  from the artists in your library (grouped by age, all / albums / singles).
+- Settings are a view in the main window instead of a separate window: sections, dependent
+  rows marked `└`, a filter, reset per section, inline validation with the rule in red. The
+  built-in player has its own section there.
+
 ## [0.2.0] - 2026-10-24
 
 - **Built-in player**: rtify can now play by itself. With the `builtin-player` feature (on by

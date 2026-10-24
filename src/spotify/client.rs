@@ -367,6 +367,21 @@ impl SpotifyClient {
         self.get_required(&format!("/artists/{artist_id}/albums"), &q).await
     }
 
+    /// Albums and singles of an artist, as Spotify lists them (newest first within each group).
+    pub async fn artist_releases(&self, artist_id: &str) -> Result<Vec<Album>, ApiError> {
+        let q = vec![("include_groups", "album,single".to_owned()), ("limit", "10".to_owned())];
+        let page: Page<Album> = self.get_required(&format!("/artists/{artist_id}/albums"), &q).await?;
+        Ok(page.items)
+    }
+
+    /// The last songs played on this account, newest first.
+    pub async fn recently_played(&self) -> Result<Vec<PlayHistory>, ApiError> {
+        let page: CursorPage<PlayHistory> = self
+            .get_required("/me/player/recently-played", &[("limit", "50".to_owned())])
+            .await?;
+        Ok(page.items)
+    }
+
     /// Songs by an artist (search, since top-tracks needs a market and is limited to 10).
     pub async fn artist_tracks(&self, name: &str) -> Result<Vec<Track>, ApiError> {
         let q = vec![

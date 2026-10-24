@@ -40,6 +40,7 @@ import struct
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 
 import gi
@@ -69,6 +70,8 @@ SKIP = re.compile(r"quit|log ?out|sign ?out|delete|remove|unfollow|close", re.I)
 BUTTONS = ("push button", "toggle button", "menu item", "check box", "radio button")
 # Other things a screen reader lands on that need a name too.
 NAMED = ("list item", "slider", "text", "entry", "spin button")
+# Buttons that leave the current view or hide part of it: click-all presses them last.
+LEAVES = re.compile(r"^(settings|minimize|show|back|forward|lyrics)\b", re.I)
 
 
 class Run:
@@ -215,6 +218,9 @@ class Run:
             grab(path)
             shots.append((name, path))
 
+        shot("home")
+        click_center(wait(lambda: first(self.frame, role="list item", name="Coding Nights"), 5, "Coding Nights"))
+        settle(1.5)
         shot("playlist")
         self.open_library_tab("albums")
         self.click_first_row()
@@ -231,7 +237,8 @@ class Run:
         key("Return")
         settle(2)
         shot("search")
-        key("Escape")
+        self.show_nav("new releases")
+        shot("releases")
         click_center(wait(lambda: first(self.frame, role="list item", name="Coding Nights"), 5, "Coding Nights"))
         settle(1)
         cli("--toggle-lyrics")
@@ -255,14 +262,12 @@ class Run:
             missing.append("devices (no device toggle button found)")
         cli("--preferences")
         settle(2)
-        # Without a window manager nothing raises the new window.
-        for wid in [] if WAYLAND else subprocess.run(["xdotool", "search", "--name", "settings"], capture_output=True,
-                                  text=True).stdout.split():
-            subprocess.run(["xdotool", "windowraise", wid], check=False)
-        shot("preferences")
-        key("Escape")
-        close_other_windows(self.app, self.frame)
-        settle(1)
+        shot("settings")
+        self.press_frame_button("minimize")
+        shot("sidebar-minimized")
+        self.press_frame_button("show")
+        click_center(wait(lambda: first(self.frame, role="list item", name="Coding Nights"), 5, "Coding Nights"))
+        settle(1.5)
         # Last: closing a row menu may move the list (see scroll-jump), which would leak into
         # every later screenshot.
         self.open_row_menu(2)
@@ -452,19 +457,23 @@ class Run:
             for line in self.log_since(offset):
                 problems.append(f"after clicking {label}: {line}")
 
-        # Every distinct visible button of the main window.
-        for o in [o for o in walk(self.frame) if o.get_role_name() in BUTTONS and showing(o)]:
-            if not self.alive():
-                break
-            try:
-                name = (o.get_name() or "").strip()
-                label = f"{o.get_role_name()} {name!r}"
-            except Exception:
-                continue
-            if label in seen or SKIP.search(name):
-                continue
-            seen.add(label)
-            try_click(o, label)
+        def click_visible(skip=None):
+            """Every distinct button showing now; one that a previous click hid is left out."""
+            for o in [o for o in walk(self.frame) if o.get_role_name() in BUTTONS and showing(o)]:
+                if not self.alive():
+                    break
+                try:
+                    name = (o.get_name() or "").strip()
+                    label = f"{o.get_role_name()} {name!r}"
+                except Exception:
+                    continue
+                if label in seen or SKIP.search(name) or (skip and skip.search(name)) or not showing(o):
+                    continue
+                seen.add(label)
+                try_click(o, label)
+
+        # The main window as it is (a playlist), without the buttons that leave it.
+        click_visible(LEAVES)
 
         # Every entry of a track row's context menu, reopening the menu each time.
         if self.alive():
@@ -489,6 +498,19 @@ class Run:
                     key("Escape")
                     continue
                 try_click(item, f"row menu entry {name!r}")
+
+        # Every other view, then the buttons that leave the current one.
+        for view in ("home", "search", "new releases"):
+            if self.alive():
+                self.show_nav(view)
+                click_visible(LEAVES)
+        if self.alive():
+            cli("--preferences")
+            settle(1.5)
+            click_visible(LEAVES)
+            click_visible()
+        if self.alive():
+            self.restore_defaults()
 
         if self.alive():
             problems += [f"at exit: {line}" for line in self.log_since(0) if "at exit" in line]
@@ -644,10 +666,10 @@ class Run:
         problems = []
 
         def status():
-            for o in walk(self.frame):
-                if o.get_role_name() == "label" and (o.get_name() or "") in ("offline", "Demo", "online"):
-                    return o.get_name()
-            return None
+            # The top bar shows "offline" while Spotify is unreachable and nothing otherwise.
+            offline = any(o.get_role_name() == "label" and o.get_name() == "offline" and showing(o)
+                          for o in walk(self.frame))
+            return "offline" if offline else "online"
 
         def label(pattern):
             return first(self.app, role=re.compile("label|document.*"), name=re.compile(pattern, re.I))
@@ -692,7 +714,7 @@ class Run:
             return
         responsive("offline")
         self.faults([])
-        if not poll(lambda: status() == "Demo", 150):
+        if not poll(lambda: status() == "online", 150):
             problems.append(f"still {status()!r} 150 s after Spotify came back")
         elif label("cannot reach Spotify"):
             problems.append("the offline banner stays after Spotify came back")
@@ -703,7 +725,7 @@ class Run:
         responsive("while a poll hangs")
         self.faults([])
         # Two hung polls count as offline; wait until rtify is back before the next case.
-        poll(lambda: status() == "Demo", 60)
+        poll(lambda: status() == "online", 60)
 
         def playing():
             return self.api("GET", "/me/player")["item"]["name"]
@@ -712,9 +734,17 @@ class Run:
             return any(o.get_role_name() == "label" and o.get_name() == name and showing(o) and extents(o)[1] > 760
                        for o in walk(self.frame))
 
+        def lyrics_fetched(name):
+            # rtify keeps lyrics it already has, so the check needs a song it never asked for.
+            return any(r["path"].startswith("/api/") and name in urllib.parse.unquote_plus(r.get("query", ""))
+                       for r in self.requests_seen())
+
         # LRCLIB down: the lyrics page says so instead of searching forever.
         self.faults([{"path": "^/api/(get|search)$", "drop": True}])
-        self.api("PUT", "/me/player/next")
+        for _ in range(8):
+            self.api("PUT", "/me/player/next")
+            if not lyrics_fetched(playing()):
+                break
         if not poll(lambda: in_player_bar(playing()), 30):
             problems.append(f"rtify did not pick up the track change to {playing()!r} within 30 s")
         cli("--toggle-lyrics")
@@ -747,7 +777,7 @@ class Run:
         self.faults([])
         if not poll(lambda: first(self.frame, role="list item", name="Coding Nights"), 30):
             problems.append("rtify did not connect by itself once Spotify was back")
-        if not poll(lambda: status() == "Demo", 10):
+        if not poll(lambda: status() == "online", 10):
             problems.append(f"status {status()!r} after connecting")
         settle(2)
         self.check("failures", problems)
@@ -1179,6 +1209,41 @@ class Run:
 
     # ------------------------------------------------------------------ navigation helpers
 
+    def restore_defaults(self):
+        """Undo what clicking every settings button changed: each section's reset, then the
+        full sidebar on the playlists tab, for the checks that run next."""
+        key("Escape")
+        cli("--preferences")
+        settle(1.5)
+        for _ in range(12):
+            reset = next((o for o in walk(self.frame) if o.get_role_name() == "push button"
+                          and o.get_name() == "reset" and showing(o)), None)
+            if reset is None:
+                break
+            do_click(reset)
+            settle(1.2)
+        show = next((o for o in walk(self.frame) if o.get_role_name() == "push button"
+                     and o.get_name() == "show" and showing(o)), None)
+        if show is not None:
+            do_click(show)
+            settle(1)
+        self.open_library_tab("playlists")
+        click_center(wait(lambda: first(self.frame, role="list item", name="Coding Nights"), 5, "Coding Nights"))
+        settle(1.5)
+
+    def show_nav(self, name):
+        """Open a view from the nav panel (number keys would land in a focused entry)."""
+        row = wait(lambda: next((o for o in walk(self.frame) if o.get_role_name() == "list item"
+                                 and o.get_name() == name and showing(o)), None), 5, f"nav entry {name}")
+        click_center(row)
+        settle(1.5)
+
+    def press_frame_button(self, name):
+        b = wait(lambda: next((o for o in walk(self.frame) if o.get_role_name() == "push button"
+                               and o.get_name() == name and showing(o)), None), 5, f"{name} button")
+        do_click(b)
+        settle(1.5)
+
     def open_library_tab(self, name):
         tab = wait(lambda: first(self.frame, role="toggle button", name=name), 5, f"library tab {name}")
         do_click(tab)
@@ -1186,9 +1251,11 @@ class Run:
 
     def library_list(self):
         for o in walk(self.frame):
-            if o.get_role_name() == "label" and o.get_name() == "your library":
-                panel = o.get_parent()
-                return first(panel, role="list")
+            # The library panel's title (the nav entry "library" is a label too, without a list).
+            if o.get_role_name() == "label" and o.get_name() == "library":
+                lst = first(o.get_parent(), role="list")
+                if lst:
+                    return lst
         return None
 
     def click_first_row(self):

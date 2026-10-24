@@ -68,6 +68,8 @@ type UndoOp = undo::UndoOp<Collection>;
 enum Nav {
     Collection(Collection),
     Search(String),
+    /// Home, new releases or settings.
+    Page(&'static str),
 }
 
 impl PartialEq for Nav {
@@ -76,6 +78,7 @@ impl PartialEq for Nav {
         match (self, other) {
             (Nav::Collection(a), Nav::Collection(b)) => a.uri == b.uri,
             (Nav::Search(a), Nav::Search(b)) => a == b,
+            (Nav::Page(a), Nav::Page(b)) => a == b,
             _ => false,
         }
     }
@@ -96,7 +99,11 @@ pub struct Inner {
     saved_current: Cell<Option<bool>>,
     logged_in: Cell<bool>,
     window: OnceCell<MainWindow>,
-    prefs: RefCell<Option<gtk::Window>>,
+    /// The page the lyrics toggle goes back to.
+    before_lyrics: RefCell<String>,
+    /// When home and new releases were last fetched.
+    home_loaded: Cell<Option<std::time::Instant>>,
+    releases_loaded: Cell<Option<std::time::Instant>>,
     tray: RefCell<Option<TrayHandle>>,
     mpris: RefCell<Option<MprisHandle>>,
     hold: RefCell<Option<gio::ApplicationHoldGuard>>,
@@ -165,6 +172,17 @@ fn demo_mode() -> bool {
     std::env::var_os("RTIFY_DEMO").is_some_and(|v| !v.is_empty() && v != "0")
 }
 
+/// Local wall-clock time for the clock, the greeting and release ages. In demo mode
+/// `RTIFY_DEMO_NOW` (ISO 8601, e.g. `2026-10-24T20:15:00Z`) pins it, so screenshots match.
+pub fn now_local() -> Option<glib::DateTime> {
+    let pinned = demo_mode()
+        .then(|| std::env::var("RTIFY_DEMO_NOW").ok())
+        .flatten()
+        .and_then(|s| glib::DateTime::from_iso8601(&s, None).ok())
+        .and_then(|d| d.to_local().ok());
+    pinned.or_else(|| glib::DateTime::now_local().ok())
+}
+
 pub fn run(args: Vec<String>) -> glib::ExitCode {
     crate::theme::fonts::register_bundled(&paths::cache_dir().join("fonts"));
     let gtk_app = gtk::Application::builder()
@@ -211,7 +229,9 @@ impl App {
             saved_current: Cell::new(None),
             logged_in: Cell::new(false),
             window: OnceCell::new(),
-            prefs: RefCell::default(),
+            before_lyrics: RefCell::new("home".into()),
+            home_loaded: Cell::new(None),
+            releases_loaded: Cell::new(None),
             tray: RefCell::default(),
             mpris: RefCell::default(),
             hold: RefCell::default(),
@@ -268,6 +288,10 @@ impl App {
             *app.playback.borrow_mut() = pb;
             if !s.page.is_empty() {
                 app.win().show_page(&s.page);
+                if s.page == "lyrics" {
+                    // Closing lyrics goes to the collection the library restores.
+                    *app.before_lyrics.borrow_mut() = "library".into();
+                }
             }
         }
         if app.config.borrow().config.window.compact {
@@ -295,7 +319,7 @@ impl App {
         }))
     }
 
-    fn win(&self) -> &MainWindow {
+    pub fn win(&self) -> &MainWindow {
         self.window.get().expect("window built during startup")
     }
 
@@ -534,8 +558,12 @@ impl App {
             }
             Command::ToggleLyrics => {
                 if w.window.is_visible() && w.page() == "lyrics" {
-                    w.show_page("library");
+                    let back = self.before_lyrics.borrow().clone();
+                    w.show_page(&back);
                 } else {
+                    if w.page() != "lyrics" && w.page() != "login" {
+                        *self.before_lyrics.borrow_mut() = w.page();
+                    }
                     w.show_page("lyrics");
                     self.present();
                     self.load_track_lyrics();
@@ -569,6 +597,7 @@ impl App {
             }
             Command::FocusSearch => {
                 self.present();
+                self.show_view("search", true);
                 w.focus_search();
             }
             Command::ToggleCompact => {
@@ -594,18 +623,10 @@ impl App {
             }
             Command::Preferences => {
                 self.present();
-                crate::ui::preferences::open(self);
+                self.show_view("settings", true);
             }
             Command::Quit => self.quit(),
         }
-    }
-
-    pub fn set_prefs_window(&self, w: Option<gtk::Window>) {
-        *self.prefs.borrow_mut() = w;
-    }
-
-    pub fn prefs_window(&self) -> Option<gtk::Window> {
-        self.prefs.borrow().clone()
     }
 
     // --- Spotify session -----------------------------------------------------------------------
@@ -792,7 +813,18 @@ impl App {
                         .get(&me.id)
                         .map(|s| s.page.clone())
                         .unwrap_or_default();
-                    app.win().show_page(if page.is_empty() { "library" } else { &page });
+                    app.win().show_page(if page.is_empty() { "home" } else { &page });
+                    let shown = app.win().page();
+                    if shown == "lyrics" {
+                        // Closing lyrics goes to the collection restored below.
+                        *app.before_lyrics.borrow_mut() = "library".into();
+                    }
+                    if let Some(p) = crate::ui::window::PAGES
+                        .iter()
+                        .find(|p| **p == shown && !matches!(**p, "library" | "lyrics" | "search"))
+                    {
+                        app.push_history(Nav::Page(p));
+                    }
                 }
                 if me.product.as_deref().is_some_and(|p| p != "premium") {
                     app.notice("playback control needs Spotify Premium; browsing still works", true);
@@ -1292,7 +1324,7 @@ impl App {
         }
     }
 
-    /// Settings → playback → built-in player on/off.
+    /// Settings → built-in player → play on this computer.
     pub fn set_builtin_enabled(&self, on: bool) {
         self.update_config(|c| c.player.enabled = on);
         if on {
@@ -1438,6 +1470,14 @@ impl App {
                     side.set_playlists(playlists);
                     side.set_albums(albums);
                     side.set_artists(artists);
+                    app.win().rail.set_items(&side.all());
+                    app.home_loaded.set(None);
+                    app.releases_loaded.set(None);
+                    match app.win().page().as_str() {
+                        "home" => app.load_home(),
+                        "releases" => app.load_releases(),
+                        _ => {}
+                    }
                     // Restore the open collection from the last session; first run shows the
                     // first playlist rather than an empty view.
                     let saved = app
@@ -1447,7 +1487,9 @@ impl App {
                         .and_then(|a| app.session.borrow().data.accounts.get(a).and_then(|s| s.library_selection.clone()));
                     let restored = saved.filter(|u| u != SEARCH_URI).and_then(|uri| side.find(&uri));
                     if let Some(c) = restored.or_else(|| side.first_playlist()) {
-                        app.show_collection(c, true, false);
+                        // Recorded in back/forward only when the library page is what shows.
+                        let record = app.win().page() == "library";
+                        app.show_collection(c, record, false);
                     }
                 }
                 Err(e) => app.notice(&format!("library: {e}"), true),
@@ -1517,8 +1559,154 @@ impl App {
         self.win().set_history_buttons(back, forward);
         match nav {
             Nav::Collection(c) => self.open_collection(c, false),
-            Nav::Search(q) => self.search(&q, false),
+            Nav::Search(q) => {
+                self.show_view("search", false);
+                self.win().search.set_query(&q);
+                if !q.is_empty() {
+                    self.search(&q, false);
+                }
+            }
+            Nav::Page(p) => self.show_view(p, false),
         }
+    }
+
+    /// Bring a page of the main view to the front: home, search, library, releases or
+    /// settings. `record` adds it to back/forward. Home and new releases fetch what they show
+    /// on first sight and again after a while.
+    pub fn show_view(&self, view: &str, record: bool) {
+        let w = self.win();
+        if w.page() == "login" {
+            return;
+        }
+        match view {
+            "library" => {
+                let current = w.collection.state.borrow().collection.clone();
+                match current.or_else(|| w.sidebar.first_playlist()) {
+                    Some(c) => self.open_collection(c, record),
+                    None => w.show_page("library"),
+                }
+                return;
+            }
+            "search" => {
+                if record {
+                    self.push_history(Nav::Search(w.search.query()));
+                }
+                w.show_page("search");
+                w.search.focus();
+                return;
+            }
+            _ => {}
+        }
+        let Some(page) = crate::ui::window::PAGES.iter().find(|p| **p == view) else {
+            return;
+        };
+        if record {
+            self.push_history(Nav::Page(page));
+        }
+        w.show_page(page);
+        self.schedule_session_save();
+        let stale = |at: Option<std::time::Instant>, secs: u64| at.is_none_or(|t| t.elapsed() > Duration::from_secs(secs));
+        match view {
+            "home" => {
+                w.home.refresh_greeting();
+                if stale(self.home_loaded.get(), 120) {
+                    self.load_home();
+                }
+            }
+            "releases" if stale(self.releases_loaded.get(), 30 * 60) => self.load_releases(),
+            // Values change elsewhere too (B, the panel toggle, album art): show them as they are.
+            "settings" => w.settings.rebuild(),
+            _ => {}
+        }
+    }
+
+    /// Home: "jump back in" from the contexts played last, "recently played" songs.
+    pub fn load_home(&self) {
+        if !self.logged_in.get() {
+            return;
+        }
+        self.home_loaded.set(Some(std::time::Instant::now()));
+        let client = self.client();
+        let app = self.clone();
+        spawn_then(async move { client.recently_played().await }, move |r| {
+            let w = app.win();
+            let mut library = vec![Collection::liked()];
+            library.extend(w.sidebar.all());
+            w.home.set_library_size(library.len() - 1);
+            let history = r.unwrap_or_else(|e| {
+                log::debug!("recently played: {e}");
+                Vec::new()
+            });
+            let contexts: Vec<String> = history.iter().filter_map(|h| h.context.as_ref().map(|c| c.uri.clone())).collect();
+            w.home.set_jump(&crate::ui::home::jump_back_in(&contexts, &library, 9));
+            w.home
+                .set_recent(crate::ui::home::unique_tracks(history.into_iter().map(|h| h.track).collect(), 12));
+        });
+    }
+
+    /// New releases from followed artists and the artists of saved albums.
+    pub fn load_releases(&self) {
+        if !self.logged_in.get() {
+            return;
+        }
+        self.releases_loaded.set(Some(std::time::Instant::now()));
+        let w = self.win();
+        let mut ids: Vec<String> = w.sidebar.artist_ids();
+        ids.truncate(40);
+        if ids.is_empty() {
+            w.releases
+                .set_status("follow artists or save albums to see their new releases here");
+            w.releases.set_albums(Vec::new());
+            return;
+        }
+        w.releases.set_status("loading…");
+        let client = self.client();
+        let app = self.clone();
+        spawn_then(
+            async move {
+                use futures_util::StreamExt;
+                let results: Vec<_> = futures_util::stream::iter(ids)
+                    .map(|id| {
+                        let c = client.clone();
+                        async move { c.artist_releases(&id).await }
+                    })
+                    .buffer_unordered(4)
+                    .collect()
+                    .await;
+                let failed = results.iter().filter(|r| r.is_err()).count();
+                let first_error = results.iter().find_map(|r| r.as_ref().err().map(|e| e.to_string()));
+                let albums: Vec<_> = results.into_iter().filter_map(Result::ok).flatten().collect();
+                (albums, failed, first_error)
+            },
+            move |(albums, failed, error): (Vec<crate::spotify::model::Album>, usize, Option<String>)| {
+                let r = &app.win().releases;
+                match error {
+                    Some(e) if albums.is_empty() => r.set_status(&format!("could not load releases: {e}")),
+                    Some(_) => r.set_status(&format!("{failed} artists could not be loaded")),
+                    None => r.set_status(""),
+                }
+                r.set_albums(albums);
+            },
+        );
+    }
+
+    pub fn set_sidebar_collapsed(&self, collapsed: bool) {
+        self.update_config(|c| c.window.sidebar_collapsed = collapsed);
+        self.win().set_sidebar_collapsed(collapsed);
+    }
+
+    pub fn set_queue_panel(&self, visible: bool) {
+        self.update_config(|c| c.window.queue_panel = visible);
+        self.win().set_queue_panel(visible);
+    }
+
+    /// Apply the layout settings (after a reset in settings).
+    pub fn apply_layout(&self) {
+        let c = self.config.borrow().config.window.clone();
+        let w = self.win();
+        w.set_sidebar_collapsed(c.sidebar_collapsed);
+        w.set_queue_panel(c.queue_panel);
+        w.set_now_playing_panel(c.now_playing_panel);
     }
 
     pub fn load_tracks(&self, uri: &str, offset: u32) {
@@ -1624,9 +1812,17 @@ impl App {
         }
     }
 
+    /// Search Spotify and show the results in the search view. While typing, `record`
+    /// refines the current search entry of back/forward instead of adding one per pause.
     pub fn search(&self, q: &str, record: bool) {
         if record {
-            self.push_history(Nav::Search(q.to_owned()));
+            let refine = matches!(self.history.borrow().current(), Some(Nav::Search(_)));
+            if refine {
+                self.history.borrow_mut().replace_current(Nav::Search(q.to_owned()));
+            } else {
+                self.push_history(Nav::Search(q.to_owned()));
+            }
+            self.update_config(|c| crate::ui::search::remember(&mut c.library.recent_searches, q));
         }
         let client = self.client();
         let app = self.clone();
@@ -1634,27 +1830,29 @@ impl App {
         let query = q.clone();
         spawn_then(async move { client.search(&q).await }, move |r| match r {
             Ok(res) => {
-                let mut cols: Vec<Collection> = res
-                    .playlists
-                    .map(|p| p.items.into_iter().flatten().map(|p| Collection::from_playlist(&p)).collect())
-                    .unwrap_or_default();
-                cols.extend(
-                    res.albums
-                        .map(|a| a.items.iter().map(Collection::from_album).collect::<Vec<_>>())
+                let results = crate::ui::search::Results {
+                    playlists: res
+                        .playlists
+                        .map(|p| p.items.into_iter().flatten().map(|p| Collection::from_playlist(&p)).collect())
                         .unwrap_or_default(),
-                );
-                cols.extend(
-                    res.artists
-                        .map(|a| a.items.iter().map(Collection::from_artist).collect::<Vec<_>>())
+                    albums: res
+                        .albums
+                        .map(|a| a.items.iter().map(Collection::from_album).collect())
                         .unwrap_or_default(),
-                );
-                let tracks = res.tracks.map(|t| t.items).unwrap_or_default();
+                    artists: res
+                        .artists
+                        .map(|a| a.items.iter().map(Collection::from_artist).collect())
+                        .unwrap_or_default(),
+                    tracks: res.tracks.map(|t| t.items).unwrap_or_default(),
+                };
                 let w = app.win();
-                w.collection.show_search(&query, cols, tracks);
-                w.sidebar.mark_selected(None);
-                w.show_page("library");
+                if w.page() != "search" {
+                    w.show_page("search");
+                    w.search.set_query(&query);
+                }
+                w.search.set_results(&query, results);
             }
-            Err(e) => app.notice(&format!("search: {e}"), true),
+            Err(e) => app.win().search.set_error(&format!("search: {e}")),
         });
     }
 
@@ -1667,7 +1865,16 @@ impl App {
         let client = self.client();
         let app = self.clone();
         spawn_then(async move { client.queue().await }, move |r| match r {
-            Ok(q) => app.win().now_playing.set_queue(&q),
+            Ok(q) => {
+                let from = app
+                    .playback
+                    .borrow()
+                    .context_uri
+                    .clone()
+                    .and_then(|uri| app.win().sidebar.find(&uri))
+                    .map(|c| c.name);
+                app.win().now_playing.set_queue(&q, from.as_deref());
+            }
             Err(e) => log::debug!("queue: {e}"),
         });
     }
