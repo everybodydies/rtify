@@ -438,6 +438,15 @@ class Run:
         expect("status did not switch to Paused", lambda: pc("status") == "Paused")
         self.check("mpris", problems)
 
+    def show_lyrics(self, on):
+        """Open or close the lyrics page whatever state an earlier check left it in."""
+        def is_open():
+            b = first(self.frame, role="toggle button", name=re.compile("^lyrics$", re.I))
+            return bool(b and pressed(b))
+        if is_open() != on:
+            cli("--toggle-lyrics")
+            poll(lambda: is_open() == on, 5)
+
     def click_all(self):
         problems = []
         clicked = 0
@@ -514,6 +523,8 @@ class Run:
             click_visible()
         if self.alive():
             self.restore_defaults()
+            # The player bar's lyrics toggle is among the buttons pressed last.
+            self.show_lyrics(False)
 
         if self.alive():
             problems += [f"at exit: {line}" for line in self.log_since(0) if "at exit" in line]
@@ -742,7 +753,9 @@ class Run:
             return any(r["path"].startswith("/api/") and name in urllib.parse.unquote_plus(r.get("query", ""))
                        for r in self.requests_seen())
 
-        # LRCLIB down: the lyrics page says so instead of searching forever.
+        # LRCLIB down: the lyrics page says so instead of searching forever. Closed first, so
+        # the track change below does not fetch before the page opens.
+        self.show_lyrics(False)
         self.faults([{"path": "^/api/(get|search)$", "drop": True}])
         # Earlier checks skip through the queue and may leave repeat-one on, so walk all of it.
         self.api("PUT", "/me/player/repeat?state=off")
@@ -755,13 +768,16 @@ class Run:
         if not poll(lambda: in_player_bar(playing()), 30):
             problems.append(f"rtify did not pick up the track change to {playing()!r} within 30 s")
         toggled = time.time()
-        cli("--toggle-lyrics")
-        if not poll(lambda: label("lyrics service unreachable"), 25):
+        self.show_lyrics(True)
+        # Wait on the proxy log, not the accessibility tree: walking that nonstop keeps a slow
+        # machine too busy to send the request at all.
+        poll(lambda: any(r["path"].startswith("/api/") and r["t"] > toggled for r in self.requests_seen()), 25)
+        if not poll(lambda: label("lyrics service unreachable"), 10):
             shown = [o.get_name() for o in walk(self.frame) if o.get_role_name() == "label" and "lyric" in (o.get_name() or "")]
             asked = [f'{r["path"]} +{r["t"] - toggled:.1f}s' for r in self.requests_seen()
                      if r["path"].startswith("/api/") and r["t"] > toggled - 5]
             problems.append(f"with LRCLIB down the lyrics page does not say so ({shown}; LRCLIB asked: {asked})")
-        cli("--toggle-lyrics")
+        self.show_lyrics(False)
         self.faults([])
 
         # The session ends (token revoked): ask to sign in again instead of retrying forever.
@@ -1041,10 +1057,6 @@ class Run:
     def restart(self):
         problems = []
 
-        def pressed(o):
-            st = o.get_state_set()
-            return st.contains(Atspi.StateType.PRESSED) or st.contains(Atspi.StateType.CHECKED)
-
         close_other_windows(self.app, self.frame)
         self.open_library_tab("playlists")
         click_center(wait(lambda: first(self.frame, role="list item", name="Gym"), 5, "Gym"))
@@ -1254,7 +1266,7 @@ class Run:
         seconds = int(os.environ.get("RTIFY_UI_SOAK", "180"))
         close_other_windows(self.app, self.frame)
         self.api("PUT", "/me/player/play")
-        cli("--toggle-lyrics")
+        self.show_lyrics(True)
         settle(5)
         pid = self.proc.pid
         samples = []
@@ -1269,7 +1281,7 @@ class Run:
             if not self.alive():
                 problems.append("rtify exited during the soak")
                 break
-        cli("--toggle-lyrics")
+        self.show_lyrics(False)
         details = dict(seconds=seconds, rss_start_mb=samples[0][1], rss_end_mb=samples[-1][1])
         # Memory: compare the second half with the first (warm-up allocations settle early).
         half = len(samples) // 2
@@ -1451,6 +1463,11 @@ def first(root, role=None, name=None, deep=True):
         except Exception:
             continue
     return None
+
+
+def pressed(o):
+    st = o.get_state_set()
+    return st.contains(Atspi.StateType.PRESSED) or st.contains(Atspi.StateType.CHECKED)
 
 
 def showing(o):
