@@ -15,6 +15,7 @@ use crate::config::{Config, Notifications};
 use crate::desktop::mpris::{self, MprisEvent, MprisHandle, MprisState};
 use crate::desktop::shortcuts::{self, ShortcutEvent};
 use crate::desktop::tray::{self, TrayHandle, TrayState};
+use crate::keymap;
 use crate::lyrics::provider::TrackQuery;
 #[cfg(feature = "demo")]
 use crate::lyrics::provider::demo;
@@ -135,6 +136,10 @@ pub struct Inner {
     builtin_restart: RefCell<Option<glib::SourceId>>,
     /// The status line in settings, while that window is open.
     pub builtin_label: RefCell<Option<glib::WeakRef<gtk::Label>>>,
+    /// The volume to go back to when unmuting.
+    pre_mute: Cell<Option<u32>>,
+    /// The action whose key Settings → shortcuts is waiting for.
+    recording: Cell<Option<keymap::Action>>,
 }
 
 #[derive(Clone)]
@@ -265,6 +270,8 @@ impl App {
             builtin_gen: Cell::new(0),
             builtin_restart: RefCell::default(),
             builtin_label: RefCell::default(),
+            pre_mute: Cell::new(None),
+            recording: Cell::new(None),
         }));
         // Background operation: the process outlives its window until Quit.
         *app.hold.borrow_mut() = Some(gtk_app.hold());
@@ -328,6 +335,11 @@ impl App {
 
     pub fn win(&self) -> &MainWindow {
         self.window.get().expect("window built during startup")
+    }
+
+    /// The window, or None while it is still being built.
+    pub fn try_win(&self) -> Option<&MainWindow> {
+        self.window.get()
     }
 
     fn client(&self) -> SpotifyClient {
@@ -514,24 +526,112 @@ impl App {
             action.connect_activate(move |_, _| app.command(c));
             self.gtk_app.add_action(&action);
         }
-        let accels: &[(Command, &[&str])] = &[
-            (Command::PlayPause, &["<Ctrl>space"]),
-            (Command::Next, &["<Ctrl>Right"]),
-            (Command::Previous, &["<Ctrl>Left"]),
-            (Command::ToggleShuffle, &["<Ctrl>s"]),
-            (Command::CycleRepeat, &["<Ctrl>r"]),
-            (Command::VolumeUp, &["<Ctrl>Up"]),
-            (Command::VolumeDown, &["<Ctrl>Down"]),
-            (Command::ToggleLyrics, &["<Ctrl>y"]),
-            (Command::FocusSearch, &["<Ctrl>l", "<Ctrl>k"]),
-            (Command::ToggleCompact, &["<Ctrl><Shift>m"]),
-            (Command::Preferences, &["<Ctrl>comma"]),
-            (Command::ReloadTheme, &["F5"]),
-            (Command::Quit, &["<Ctrl>q"]),
-        ];
-        for (c, keys) in accels {
-            self.gtk_app.set_accels_for_action(&format!("app.{}", c.name()), keys);
+        // Keys are not GTK accelerators: they are rebindable (see `keymap` and the window's key
+        // handler).
+    }
+
+    /// Run the action bound to a key in the window. False when it does not apply right now, so
+    /// the key goes on to the focused widget.
+    pub fn run_key(&self, a: keymap::Action) -> bool {
+        use keymap::Action as K;
+        let w = self.win();
+        if w.page() == "login" && a != K::Quit {
+            return false;
         }
+        if let Some(c) = a.command() {
+            self.command(c);
+            return true;
+        }
+        match a {
+            K::SeekBack | K::SeekForward => {
+                let (pos, len) = {
+                    let pb = self.playback.borrow();
+                    (pb.position_now() as i64, pb.duration_ms() as i64)
+                };
+                if len == 0 {
+                    return false;
+                }
+                let to = (pos + if a == K::SeekForward { 5000 } else { -5000 }).clamp(0, (len - 1000).max(0));
+                self.player(PlayerOp::Seek(to as u64));
+                self.refresh_player_ui();
+            }
+            K::Home | K::SearchView | K::Library | K::Releases => {
+                let i = [K::Home, K::SearchView, K::Library, K::Releases]
+                    .iter()
+                    .position(|&v| v == a)
+                    .unwrap_or(0);
+                self.show_view(crate::ui::nav::VIEWS[i].0, true);
+            }
+            K::Back => self.navigate_history(-1),
+            K::Forward => self.navigate_history(1),
+            K::Sidebar => {
+                let collapsed = self.config.borrow().config.window.sidebar_collapsed;
+                self.set_sidebar_collapsed(!collapsed);
+            }
+            K::Queue => {
+                let shown = self.config.borrow().config.window.now_playing_panel;
+                self.set_now_playing_panel(!shown);
+            }
+            K::PlaySelected => return w.page() == "library" && w.collection.play_selected(),
+            K::AddToLastPlaylist => {
+                let mut uris: Vec<String> = if w.page() == "library" {
+                    w.collection.selected_tracks().into_iter().map(|t| t.uri).collect()
+                } else {
+                    Vec::new()
+                };
+                if uris.is_empty() {
+                    uris.extend(self.playback.borrow().track_uri().map(String::from));
+                }
+                match self.last_playlist() {
+                    _ if uris.is_empty() => self.toast("nothing to add", false),
+                    Some(p) => self.add_to_playlist(&p, uris),
+                    None => self.toast("add a song to a playlist from its menu first", false),
+                }
+            }
+            K::Undo => self.undo(),
+            K::FindInList => self.focus_list_search(),
+            _ => return false,
+        }
+        true
+    }
+
+    fn volume(&self) -> u32 {
+        self.playback.borrow().device.as_ref().and_then(|d| d.volume_percent).unwrap_or(50)
+    }
+
+    /// Set the volume from a key and say so ("volume 60%", "muted").
+    fn set_volume_noted(&self, v: u32) {
+        self.player(PlayerOp::SetVolume(v));
+        self.refresh_player_ui();
+        self.toast(&if v == 0 { "muted".to_owned() } else { format!("volume {v}%") }, false);
+    }
+
+    /// The action Settings → shortcuts is recording a key for.
+    pub fn recording(&self) -> Option<keymap::Action> {
+        self.recording.get()
+    }
+
+    pub fn set_recording(&self, a: Option<keymap::Action>) {
+        self.recording.set(a);
+        self.win().settings.refresh_keys();
+    }
+
+    /// Bind the recorded key ("" clears it); a key another action had is swapped.
+    pub fn record_key(&self, combo: &str) {
+        let Some(a) = self.recording.take() else {
+            return;
+        };
+        let mut swapped = None;
+        self.update_config(|c| swapped = keymap::rebind(&mut c.shortcuts.keys, a, combo));
+        if let Some((other, old)) = swapped {
+            let to = if old.is_empty() {
+                String::new()
+            } else {
+                format!(" → {}", keymap::label(&old))
+            };
+            self.toast(&format!("swapped with {}{to}", other.description()), false);
+        }
+        self.win().settings.refresh();
     }
 
     pub fn command(&self, c: Command) {
@@ -544,6 +644,7 @@ impl App {
                 | Command::CycleRepeat
                 | Command::VolumeUp
                 | Command::VolumeDown
+                | Command::Mute
         );
         if needs_spotify && !self.logged_in.get() {
             // e.g. a media key right after login started: run once connected.
@@ -603,9 +704,19 @@ impl App {
                 self.set_repeat(r);
             }
             Command::VolumeUp | Command::VolumeDown => {
-                let cur = self.playback.borrow().device.as_ref().and_then(|d| d.volume_percent).unwrap_or(50) as i32;
-                let v = (cur + if c == Command::VolumeUp { 5 } else { -5 }).clamp(0, 100) as u32;
-                self.player(PlayerOp::SetVolume(v));
+                let cur = self.volume() as i32;
+                let v = (cur + if c == Command::VolumeUp { 10 } else { -10 }).clamp(0, 100) as u32;
+                self.set_volume_noted(v);
+            }
+            Command::Mute => {
+                let cur = self.volume();
+                if cur > 0 {
+                    self.pre_mute.set(Some(cur));
+                    self.set_volume_noted(0);
+                } else {
+                    let v = self.pre_mute.take().filter(|&v| v > 0).unwrap_or(50);
+                    self.set_volume_noted(v);
+                }
             }
             Command::FocusSearch => {
                 self.present();
@@ -950,6 +1061,8 @@ impl App {
     fn refresh_player_ui(&self) {
         let pb = self.playback.borrow().clone();
         self.win().update_playback(&pb, self.saved_current.get());
+        let here = pb.playing && pb.device.as_ref().is_some_and(|d| self.is_builtin_device(d));
+        self.win().player.set_playing_here(here);
         self.update_mpris(&pb);
     }
 
@@ -1950,7 +2063,11 @@ impl App {
     }
 
     pub fn toast(&self, text: &str, undo: bool) {
-        self.win().toast(text, undo);
+        let motion = {
+            let a = &self.config.borrow().config.appearance;
+            a.animations_enabled && !a.reduced_motion
+        };
+        self.win().toast(text, undo, motion);
     }
 
     pub fn queue_uris(&self, uris: Vec<String>) {
@@ -2175,7 +2292,7 @@ impl App {
         if e.is_signed_out() {
             return self.session_expired();
         }
-        self.notice(&format!("could not undo ({}) · press Ctrl+Z to try again", explain(&e)), true);
+        self.notice(&format!("could not undo ({}) · press undo again to retry", explain(&e)), true);
     }
 
     pub fn set_saved_many(&self, uris: Vec<String>, on: bool) {

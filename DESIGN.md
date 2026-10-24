@@ -427,6 +427,25 @@ OLED-freundlich, weil keine Fläche aufleuchtet. Stumme/inaktive Einträge in `t
 - **Icon-Buttons:** ohne Fläche, Icon `text-4`, Hover → `text-2`.
 - Alle Buttons eckig, Beschriftung klein geschrieben.
 
+### Player-Leiste
+Jedes Bedienelement hat einen Rahmen und dieselbe Höhe (`32px`); Hover überall gleich:
+Rahmen `accent-2`, Text `text-1`. Play ist der Akzent-Button (primäre Aktion), die übrigen
+Transport-Icons sind gezeichnet (Strich `1.75` auf 24 px) und quadratisch. Shuffle und Repeat
+sind an, wenn Rahmen und Icon den Akzent tragen; Repeat-one zeichnet eine kleine „1“ ins
+Icon. Das Geräte-Element („out <gerät>“) hat einen Akzentrahmen, solange dieser Rechner
+spielt, sonst `border`. Der Rahmen der Lautstärke leuchtet anteilig (halbe Lautstärke = halber
+Rahmen in `accent-2`). Keine Tastenhinweise in Tooltips; Tasten stehen in Einstellungen →
+shortcuts.
+
+### Toast
+Schwarz, `1px`-Rahmen `accent-2`, `32px` hoch, Text `text-3`, über der Player-Leiste
+zentriert. Rein: 260 ms (Deckkraft 0→1, `translateY(14px)`→0, `scale(.96)`→1,
+`cubic-bezier(.2,.9,.25,1.15)`); raus: 200 ms ease-in (→ `translateY(8px)`, `scale(.98)`);
+sichtbar 2,2 s (mit „undo“ 6 s). Eine `1px`-Linie am unteren Rand (Akzent zu 50 % auf Schwarz
+gemischt, deckend) läuft über die Zeit von rechts nach links ab. Eine neue Meldung ersetzt den
+Text, pulsiert (`scale` 1→1.04→1, 220 ms) und startet die Zeit neu. Ohne Animationen oder mit
+reduzierter Bewegung: keine Bewegung, keine Linie.
+
 ### Eingabefeld
 Schwarz, Radius 0, Rahmen `1px solid var(--button-border)`, Fokus → Rahmen `accent-2`.
 Placeholder `text-5`. Caret gerne als Block (`caret-shape: block`, wo unterstützt), in `accent-2`.

@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-24
+
+Player bar, toasts and keys from the Sys24 design.
+
+- Keys in the window follow the design and can all be changed in Settings → shortcuts: space
+  play/pause, `n` / `shift+n` next/previous, `←`/`→` seek 5 s, `↑`/`↓` volume ±10 %, `m`
+  mute/unmute, `enter` play selected, `p` add to the last playlist, `ctrl+k` search, `1`–`4`,
+  `alt+←/→`, `b`, `q`, `l`, and the former `Ctrl` keys for shuffle, repeat, undo, list search,
+  compact window, settings and quit. Click a key and press the new one (`esc` cancels,
+  `backspace` clears); taking another action's key swaps the two, remaining clashes are marked
+  red with "also used by …". Only changed keys are stored (`[shortcuts.keys]`). The search
+  field and the nav rows show the current keys. The old `Ctrl+Space`, `Ctrl+←/→`, `Ctrl+↑/↓`,
+  `Ctrl+L`, `Ctrl+Y` and `F11` are gone.
+- Mute: `rtify --mute`, the `m` key and a new global shortcut; unmuting goes back to the
+  previous volume. Volume keys step 10 % and say "volume 60%" / "muted".
+- Global shortcuts sit in a *global* column next to each key; volume up/down and mute get the
+  media keys by default (existing configs gain them where they had no entry, config version 3).
+- Toasts rise in, pulse when a new message replaces the text, show a line that runs down over
+  the 2.2 s they stay, and fade out; no motion with animations off or reduced motion on.
+- Player bar: every control is framed and 32px high with one hover (accent frame, bright text);
+  drawn transport icons, play filled with the accent, repeat-one draws its "1" inside the icon;
+  `queue` and `lyrics` toggles; the device control reads "out <device>" and takes the accent
+  while this computer plays; the volume frame lights up in proportion to the volume. No key
+  hints in tooltips (keys live in Settings → shortcuts).
 - Built-in player: the "sign in once" notice shows once per account instead of on every start,
   and its hints point to settings → built-in player. The device also leaves Spotify's lists
   when the desktop session ends, not only on Quit. The player picks rustls' crypto backend

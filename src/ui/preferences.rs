@@ -17,6 +17,7 @@ use super::widgets::*;
 use crate::app::App;
 use crate::config::{Config, LyricAnimation, Notifications, PaletteSource, PollingMode};
 use crate::desktop::{lifecycle, shortcuts};
+use crate::keymap::{self, Action};
 
 /// Input rules for text fields.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -96,11 +97,27 @@ struct SectionHandle {
     visible: Pred,
 }
 
+/// A row of Settings → shortcuts, updated in place while keys are recorded.
+struct KeyRow {
+    action: Action,
+    key: gtk::Button,
+    note: gtk::Label,
+    reset: gtk::Button,
+    /// The portal trigger, for actions that have one; a blank of the same width otherwise.
+    global: Option<gtk::Entry>,
+    blank: gtk::Box,
+}
+
 #[derive(Default)]
 struct State {
     rows: Vec<RowHandle>,
     sections: Vec<SectionHandle>,
+    keys: Vec<KeyRow>,
+    global_head: Option<gtk::Label>,
 }
+
+/// Width of the key and global trigger columns.
+const KEY_COLUMN: i32 = 150;
 
 #[derive(Clone)]
 pub struct SettingsView {
@@ -186,6 +203,72 @@ impl SettingsView {
         for (i, s) in st.sections.iter().enumerate() {
             s.root.set_visible(any[i] && (s.visible)(&cfg));
             s.reset.set_visible((s.differs)(&cfg));
+        }
+        drop(st);
+        self.refresh_keys();
+    }
+
+    /// Key labels, clashes and the recording state of Settings → shortcuts.
+    pub fn refresh_keys(&self) {
+        let shortcuts = self.app.config.borrow().config.shortcuts.clone();
+        let recording = self.app.recording();
+        if let Some(w) = self.app.try_win() {
+            w.set_key_hints(&shortcuts.keys);
+        }
+        let st = self.state.borrow();
+        if let Some(h) = &st.global_head {
+            h.set_visible(shortcuts.portal);
+        }
+        for r in &st.keys {
+            let k = keymap::key_of(&shortcuts.keys, r.action);
+            let rec = recording == Some(r.action);
+            let clash: Vec<&str> = if rec {
+                Vec::new()
+            } else {
+                keymap::clashes(&shortcuts.keys, r.action)
+                    .into_iter()
+                    .map(|a| a.description())
+                    .collect()
+            };
+            r.key.set_label(&if rec { "press a key…".to_owned() } else { keymap::label(k) });
+            if let Some(l) = r.key.child().and_downcast::<gtk::Label>() {
+                l.set_xalign(0.0);
+            }
+            r.key.update_property(&[gtk::accessible::Property::Label(&format!(
+                "{} key: {}",
+                r.action.description(),
+                if rec { "press a key".to_owned() } else { keymap::label(k) }
+            ))]);
+            // The label child would otherwise name the button.
+            r.key.reset_relation(gtk::AccessibleRelation::LabelledBy);
+            for (class, on) in [("rt-recording", rec), ("rt-invalid", !clash.is_empty())] {
+                if on {
+                    r.key.add_css_class(class);
+                } else {
+                    r.key.remove_css_class(class);
+                }
+            }
+            let note = if rec {
+                "esc cancels · backspace clears".to_owned()
+            } else if !clash.is_empty() {
+                format!("also used by {}", clash.join(", "))
+            } else {
+                String::new()
+            };
+            r.note.set_text(&note);
+            r.note.set_visible(!note.is_empty());
+            for (class, on) in [("rt-note-accent", rec), ("rt-note-red", !clash.is_empty())] {
+                if on {
+                    r.note.add_css_class(class);
+                } else {
+                    r.note.remove_css_class(class);
+                }
+            }
+            r.reset.set_visible(shortcuts.keys.contains_key(r.action.id()));
+            if let Some(g) = &r.global {
+                g.set_visible(shortcuts.portal);
+            }
+            r.blank.set_visible(shortcuts.portal && r.global.is_none());
         }
     }
 
@@ -658,7 +741,7 @@ impl SettingsView {
         let tray = |c: &Config| c.background.tray;
         b.row(
             "minimize to tray",
-            "closing the window keeps rtify running; quit from the tray or Ctrl+Q",
+            "closing the window keeps rtify running; quit from the tray or the quit key",
             &b.on_off(c.window.minimize_to_tray, |_, c, on| c.window.minimize_to_tray = on),
             true,
             tray,
@@ -758,10 +841,34 @@ impl SettingsView {
         b.row("session", "", &logout, false, always);
 
         // Global shortcuts.
+        // Keys in the window, with the portal trigger next to them.
+        b.section("shortcuts", |c| !c.shortcuts.keys.is_empty(), |c| c.shortcuts.keys.clear(), always);
+        let head = hbox(4);
+        let in_app = label("in app", &["rt-faint", "rt-small"]);
+        in_app.set_size_request(KEY_COLUMN, -1);
+        let global = label("global", &["rt-faint", "rt-small"]);
+        global.set_size_request(KEY_COLUMN, -1);
+        for l in [&in_app, &global] {
+            l.set_xalign(0.0);
+            head.append(l);
+        }
+        b.row("", "", &head, false, always);
+        self.state.borrow_mut().global_head = Some(global);
+        for action in Action::ALL {
+            b.key_row(action, &c);
+        }
+
         b.section(
             "global shortcuts",
-            |c| c.shortcuts != Config::default().shortcuts,
-            |c| c.shortcuts = Config::default().shortcuts,
+            |c| {
+                let d = Config::default().shortcuts;
+                (c.shortcuts.portal, &c.shortcuts.bindings) != (d.portal, &d.bindings)
+            },
+            |c| {
+                let d = Config::default().shortcuts;
+                c.shortcuts.portal = d.portal;
+                c.shortcuts.bindings = d.bindings;
+            },
             always,
         );
         b.row(
@@ -777,20 +884,6 @@ impl SettingsView {
         status.set_selectable(true);
         status.set_max_width_chars(48);
         b.row("status", "", &status, true, portal);
-        for cmd in crate::commands::Command::shortcut_actions() {
-            let current = c.shortcuts.bindings.get(cmd.name()).cloned().unwrap_or_default();
-            let name = cmd.name();
-            let e = b.entry(&current, "unassigned", Rule::Any, move |c, t| {
-                c.shortcuts.bindings.insert(name.to_owned(), t.to_owned());
-            });
-            b.row(
-                &cmd.description().to_lowercase(),
-                &format!("rtify --{}", cmd.name()),
-                &e,
-                true,
-                portal,
-            );
-        }
         let copy_lua = button("copy lua", "Copy the binds for Hyprland 0.55+ (Lua)");
         let copy_conf = button("copy hyprlang", "Copy the binds for older Hyprland (hyprlang)");
         for (btn, lua) in [(&copy_lua, true), (&copy_conf, false)] {
@@ -899,6 +992,57 @@ impl Builder {
             visible,
         });
         d
+    }
+
+    /// One action of Settings → shortcuts: reset, the key (click, then press a key) and the
+    /// portal trigger.
+    fn key_row(&mut self, action: Action, c: &Config) {
+        let controls = hbox(4);
+        let reset = button("reset", &format!("Reset the {} key", action.description()));
+        reset.add_css_class("rt-seg");
+        let key = gtk::Button::with_label("");
+        key.add_css_class("rt-keycap");
+        key.set_size_request(KEY_COLUMN, -1);
+        key.set_tooltip_text(Some("click, then press a key"));
+        controls.append(&reset);
+        controls.append(&key);
+        let global = action.global().map(|cmd| {
+            let current = c.shortcuts.bindings.get(cmd.name()).cloned().unwrap_or_default();
+            let name = cmd.name();
+            let e = self.entry(&current, "unassigned", Rule::Any, move |c, t| {
+                c.shortcuts.bindings.insert(name.to_owned(), t.to_owned());
+            });
+            e.set_width_chars(1);
+            e.set_size_request(KEY_COLUMN, -1);
+            e.update_property(&[gtk::accessible::Property::Label(&format!("{} global key", action.description()))]);
+            e.set_tooltip_text(Some(&format!("rtify --{}", cmd.name())));
+            controls.append(&e);
+            e
+        });
+        let blank = hbox(0);
+        blank.set_size_request(KEY_COLUMN, -1);
+        controls.append(&blank);
+        let note = self.row(action.description(), "", &controls, false, always);
+        let a = self.view.app.clone();
+        key.connect_clicked(move |_| {
+            let again = a.recording() == Some(action);
+            a.set_recording(if again { None } else { Some(action) });
+        });
+        let a = self.view.app.clone();
+        reset.connect_clicked(move |_| {
+            a.update_config(|c| {
+                c.shortcuts.keys.remove(action.id());
+            });
+            a.win().settings.refresh();
+        });
+        self.view.state.borrow_mut().keys.push(KeyRow {
+            action,
+            key,
+            note,
+            reset,
+            global,
+            blank,
+        });
     }
 
     /// "on" / "off".

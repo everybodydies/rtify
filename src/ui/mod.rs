@@ -1,6 +1,7 @@
 pub mod clamp;
 pub mod collection;
 pub mod home;
+pub mod icons;
 pub mod library;
 pub mod lyrics;
 pub mod menu;

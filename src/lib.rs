@@ -5,6 +5,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod desktop;
+pub mod keymap;
 pub mod lyrics;
 pub mod paths;
 pub mod persistence;

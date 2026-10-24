@@ -19,6 +19,9 @@ mock Spotify API (dev/demo-server.py). Checks, in this order:
   keyboard     Tab reaches every control with a visible focus ring, Shift+Tab goes back, Enter
                opens a playlist, Space on the play button toggles playback once, the Menu key
                opens a song's menu
+  keys         m mutes and unmutes to the old volume with a toast, n skips; a key recorded in
+               Settings → shortcuts takes over, Esc cancels a recording, and taking another
+               action's key swaps the two
   restart      tab, sort, open playlist, column sort, panel, page and window size survive a restart
   big-playlist a 10 000-song playlist loads completely, stays responsive, scrolls to its end
                and filters quickly, without eating memory
@@ -945,6 +948,89 @@ class Run:
             settle(0.5)
         self.check("keyboard", problems, dict(stops=names))
 
+    def keys(self):
+        problems = []
+
+        def volume():
+            return self.api("GET", "/me/player")["device"]["volume_percent"]
+
+        def track():
+            return (self.api("GET", "/me/player").get("item") or {}).get("name")
+
+        def toast(text):
+            return poll(lambda: first(self.frame, role="label", name=text), 3)
+
+        def key_button(action):
+            return first(self.frame, role="push button", name=re.compile(rf"^{re.escape(action)} key: "))
+
+        def bound(action):
+            b = key_button(action)
+            return b.get_name().split(": ", 1)[1] if b else None
+
+        def record(action, keys):
+            b = wait(lambda: key_button(action), 5, f"the {action} key")
+            do_click(b)
+            settle(0.5)
+            if bound(action) != "press a key":
+                problems.append(f"clicking the {action} key does not start recording (shows {bound(action)!r})")
+            key(keys)
+            settle(0.3)
+
+        close_other_windows(self.app, self.frame)
+        self.show_nav("home")
+        before = volume() or 64
+        key("m")
+        if not poll(lambda: volume() == 0, 5):
+            problems.append(f"m did not mute (volume {volume()})")
+        if not toast("muted"):
+            problems.append("muting shows no 'muted' toast")
+        key("m")
+        if not poll(lambda: volume() == before, 5):
+            problems.append(f"m again did not go back to {before} (volume {volume()})")
+        if not toast(f"volume {before}%"):
+            problems.append(f"unmuting shows no 'volume {before}%' toast")
+        name = track()
+        key("n")
+        if not poll(lambda: track() != name, 5):
+            problems.append(f"n did not skip {name!r}")
+
+        # Record x for mute; Esc first cancels without a change.
+        cli("--preferences")
+        settle(1.5)
+        record("mute / unmute", "Escape")
+        if bound("mute / unmute") != "m":
+            problems.append(f"Esc while recording left the mute key at {bound('mute / unmute')!r}")
+        record("mute / unmute", "x")
+        if bound("mute / unmute") != "x":
+            problems.append(f"recording x shows {bound('mute / unmute')!r} as the mute key")
+        self.show_nav("home")
+        key("m")
+        settle(1.5)
+        if volume() == 0:
+            problems.append("m still mutes after the mute key became x")
+        key("x")
+        if not poll(lambda: volume() == 0, 5):
+            problems.append("x does not mute after it was recorded")
+        key("x")
+        poll(lambda: volume() == before, 5)
+
+        # Taking next's key swaps: next gets mute's old key.
+        cli("--preferences")
+        settle(1.5)
+        record("mute / unmute", "n")
+        # The toast stays 2.2 s: look for it before walking the settings rows again.
+        if not toast("swapped with next track → x"):
+            problems.append("the swap shows no 'swapped with next track → x' toast")
+        if (bound("mute / unmute"), bound("next track")) != ("n", "x"):
+            problems.append(f"taking n for mute gives mute {bound('mute / unmute')!r}, next {bound('next track')!r}")
+        self.restore_defaults()
+        cli("--preferences")
+        settle(1.5)
+        if (bound("mute / unmute"), bound("next track")) != ("m", "n"):
+            problems.append(f"reset left mute {bound('mute / unmute')!r}, next {bound('next track')!r}")
+        self.show_nav("home")
+        self.check("keys", problems)
+
     def restart(self):
         problems = []
 
@@ -1659,7 +1745,7 @@ def wait(fn, timeout, what):
 
 
 CHECKS = ["geometry", "a11y-names", "screenshots", "scroll-jump", "mpris", "big-playlist", "history", "undo", "instant",
-          "keyboard", "click-all", "soak", "failures", "restart"]
+          "keyboard", "keys", "click-all", "soak", "failures", "restart"]
 
 
 def main():

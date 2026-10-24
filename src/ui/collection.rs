@@ -259,7 +259,7 @@ impl CollectionView {
         let filter = gtk::SearchEntry::new();
         filter.add_css_class("rt-filter");
         filter.set_placeholder_text(Some("search in list"));
-        filter.set_tooltip_text(Some("Search in this list (Ctrl+F)"));
+        filter.set_tooltip_text(Some("Search in this list"));
         filter.set_width_chars(12);
         filter.set_max_width_chars(26);
         let actions = hbox(10);
@@ -498,6 +498,26 @@ impl CollectionView {
         let mut idx: Vec<usize> = self.table.selected_rows().iter().map(|r| self.position(r)).collect();
         idx.sort_unstable();
         idx.into_iter().filter_map(|i| self.track_at(i)).collect()
+    }
+
+    /// Play from the focused row, else the first selected one. False when there is neither.
+    pub fn play_selected(&self) -> bool {
+        let focused = self
+            .table
+            .root()
+            .and_then(|r| r.focus())
+            .and_then(|f| f.ancestor(gtk::ListBoxRow::static_type()))
+            .and_downcast::<gtk::ListBoxRow>()
+            .filter(|r| r.parent().as_ref() == Some(self.table.upcast_ref()));
+        let mut selected = self.table.selected_rows();
+        selected.sort_by_key(|r| r.index());
+        match focused.or_else(|| selected.into_iter().next()) {
+            Some(row) => {
+                self.play_from_display(self.position(&row), false);
+                true
+            }
+            None => false,
+        }
     }
 
     /// Visible tracks in display order (sort and in-list search applied).

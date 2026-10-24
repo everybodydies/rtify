@@ -15,6 +15,7 @@ pub enum Command {
     CycleRepeat,
     VolumeUp,
     VolumeDown,
+    Mute,
     FocusSearch,
     ToggleCompact,
     ReloadTheme,
@@ -23,7 +24,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 16] = [
+    pub const ALL: [Command; 17] = [
         Self::ToggleWindow,
         Self::ShowWindow,
         Self::HideWindow,
@@ -35,6 +36,7 @@ impl Command {
         Self::CycleRepeat,
         Self::VolumeUp,
         Self::VolumeDown,
+        Self::Mute,
         Self::FocusSearch,
         Self::ToggleCompact,
         Self::ReloadTheme,
@@ -56,6 +58,7 @@ impl Command {
             Self::CycleRepeat => "cycle-repeat",
             Self::VolumeUp => "volume-up",
             Self::VolumeDown => "volume-down",
+            Self::Mute => "mute",
             Self::FocusSearch => "focus-search",
             Self::ToggleCompact => "toggle-compact",
             Self::ReloadTheme => "reload-theme",
@@ -77,6 +80,7 @@ impl Command {
             Self::CycleRepeat => "Cycle repeat (off, context, track)",
             Self::VolumeUp => "Volume up",
             Self::VolumeDown => "Volume down",
+            Self::Mute => "Mute, or unmute to the previous volume",
             Self::FocusSearch => "Focus search",
             Self::ToggleCompact => "Switch compact/full window",
             Self::ReloadTheme => "Reload the theme and external palette",
@@ -101,6 +105,7 @@ impl Command {
             Self::ToggleCompact,
             Self::VolumeUp,
             Self::VolumeDown,
+            Self::Mute,
             Self::ToggleShuffle,
         ]
     }
