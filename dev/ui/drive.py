@@ -538,7 +538,12 @@ class Run:
         self.open_library_tab("playlists")
 
         def visit(name):
-            click_center(wait(lambda: first(self.frame, role="list item", name=name), 5, name))
+            row = wait(lambda: first(self.frame, role="list item", name=name), 5, name)
+            # Off the list first: under load on sway, one synthetic move straight from the last
+            # row to the next one was sometimes pressed at the old row.
+            park_pointer()
+            settle(0.3)
+            click_center(row)
             if not poll(lambda: where() == name, 4):
                 problems.append(f"clicking {name!r} in the library shows {where()!r}")
             settle(0.5)
