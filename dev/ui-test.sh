@@ -21,10 +21,14 @@ trap 'kill $(jobs -p) 2>/dev/null || true; rm -rf "$tmp"' EXIT
 
 cargo build --quiet --no-default-features --features demo
 python3 dev/demo-server.py --port "$port" >"$tmp/server.log" 2>&1 &
-for _ in $(seq 50); do curl -fs "http://127.0.0.1:$port/v1/me" >/dev/null 2>&1 && break; sleep 0.1; done
+# rtify talks to the mock through a proxy the failure checks use to break things.
+proxy=$((port + 1))
+python3 dev/ui/faults.py --port "$proxy" --upstream "http://127.0.0.1:$port" >"$tmp/faults.log" 2>&1 &
+for _ in $(seq 50); do curl -fs "http://127.0.0.1:$proxy/v1/me" >/dev/null 2>&1 && break; sleep 0.1; done
 
-export RTIFY_DEMO=1 RTIFY_API_BASE="http://127.0.0.1:$port/v1" RTIFY_ACCOUNTS_BASE="http://127.0.0.1:$port"
-export RTIFY_LRCLIB_BASE="http://127.0.0.1:$port" RTIFY_TRANSLATE_BASE="http://127.0.0.1:$port"
+export RTIFY_DEMO=1 RTIFY_API_BASE="http://127.0.0.1:$proxy/v1" RTIFY_ACCOUNTS_BASE="http://127.0.0.1:$proxy"
+export RTIFY_LRCLIB_BASE="http://127.0.0.1:$proxy" RTIFY_TRANSLATE_BASE="http://127.0.0.1:$proxy"
+export RTIFY_UI_MOCK="http://127.0.0.1:$port/v1" RTIFY_UI_FAULTS="http://127.0.0.1:$proxy/__faults"
 export RTIFY_CONFIG_DIR="$tmp/config" RTIFY_STATE_DIR="$tmp/state" XDG_CONFIG_HOME="$tmp/xdg"
 # Same frame every run: no blinking caret, no transitions.
 mkdir -p "$tmp/xdg/gtk-4.0"
