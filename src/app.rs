@@ -22,6 +22,7 @@ use crate::lyrics::synchronization::LyricClock;
 use crate::lyrics::{LyricDocument, google, lrclib, romanization, translation};
 use crate::paths::{self, APP_ID};
 use crate::persistence::{ConfigStore, SessionStore};
+use crate::player::{self, Status as BuiltinStatus};
 use crate::runtime::{self, rt, spawn_then};
 use crate::services::artwork::Artwork;
 use crate::services::history::History;
@@ -118,6 +119,15 @@ pub struct Inner {
     undo: RefCell<UndoStack<Collection>>,
     /// Failed attempts to reach Spotify while signing in at startup (retried with backoff).
     connect_attempts: Cell<u32>,
+    /// The built-in Connect device, the account it runs for, and its last status.
+    builtin: RefCell<Option<player::Handle>>,
+    builtin_account: RefCell<Option<String>>,
+    builtin_status: RefCell<BuiltinStatus>,
+    /// Bumped on every start/stop so events and lookups of an older instance are dropped.
+    builtin_gen: Cell<u64>,
+    builtin_restart: RefCell<Option<glib::SourceId>>,
+    /// The status line in settings, while that window is open.
+    pub builtin_label: RefCell<Option<glib::WeakRef<gtk::Label>>>,
 }
 
 #[derive(Clone)]
@@ -222,6 +232,12 @@ impl App {
             history: RefCell::default(),
             undo: RefCell::default(),
             connect_attempts: Cell::new(0),
+            builtin: RefCell::default(),
+            builtin_account: RefCell::default(),
+            builtin_status: RefCell::new(BuiltinStatus::Off),
+            builtin_gen: Cell::new(0),
+            builtin_restart: RefCell::default(),
+            builtin_label: RefCell::default(),
         }));
         // Background operation: the process outlives its window until Quit.
         *app.hold.borrow_mut() = Some(gtk_app.hold());
@@ -339,6 +355,12 @@ impl App {
         if let Some(handle) = self.tray.borrow_mut().take() {
             rt().block_on(async move {
                 let _ = tokio::time::timeout(Duration::from_millis(500), handle.shutdown()).await;
+            });
+        }
+        // Disconnect so the device leaves Spotify's lists now, not after a server timeout.
+        if let Some(handle) = self.builtin.borrow_mut().take() {
+            rt().block_on(async move {
+                let _ = tokio::time::timeout(Duration::from_millis(1500), handle.shutdown()).await;
             });
         }
         self.hold.borrow_mut().take();
@@ -712,9 +734,14 @@ impl App {
                 }
             },
         );
+        self.open_browser_when_listening(url_rx, url);
+    }
+
+    /// Open `url` once the redirect listener is up (a busy port fails before the browser opens).
+    fn open_browser_when_listening(&self, listening: async_channel::Receiver<()>, url: String) {
         let window = self.win().window.clone();
         glib::spawn_future_local(async move {
-            if url_rx.recv().await.is_ok() {
+            if listening.recv().await.is_ok() {
                 gtk::UriLauncher::new(&url).launch(Some(&window), gio::Cancellable::NONE, |r| {
                     if let Err(e) = r {
                         log::warn!("could not open browser: {e}");
@@ -727,9 +754,14 @@ impl App {
     pub fn logout(&self) {
         let client_id = self.config.borrow().config.spotify.client_id.clone();
         let client = self.client();
+        let account = self.account.borrow().clone();
+        self.stop_builtin_player();
         rt().spawn(async move {
             client.set_token(None).await;
             let _ = tokens::delete(tokens::SPOTIFY_REFRESH, &client_id).await;
+            if let Some(account) = account {
+                let _ = tokens::delete(tokens::PLAYER_LOGIN, &account).await;
+            }
         });
         self.logged_in.set(false);
         self.poll_gen.set(self.poll_gen.get() + 1);
@@ -767,6 +799,7 @@ impl App {
                 }
                 app.load_library();
                 app.refresh_devices();
+                app.start_builtin_player(false);
                 app.poll_now();
                 for c in app.queued.take() {
                     app.command(c);
@@ -1042,9 +1075,14 @@ impl App {
         let devices = self.devices.borrow().clone();
         let target = saved
             .filter(|id| devices.iter().any(|d| d.id.as_deref() == Some(id)))
+            .or_else(|| devices.iter().find(|d| self.is_builtin_device(d)).and_then(|d| d.id.clone()))
             .or_else(|| devices.first().and_then(|d| d.id.clone()));
         match target {
             Some(id) => self.simple(move |c| async move { c.transfer(&id, true).await }),
+            None if self.builtin_wanted() => self.notice(
+                "no Spotify device available yet — the built-in player is not ready (settings → playback)",
+                true,
+            ),
             None => self.notice("no Spotify device available — open Spotify on a phone, speaker or computer", true),
         }
     }
@@ -1094,7 +1132,7 @@ impl App {
         let app = self.clone();
         spawn_then(async move { client.devices().await }, move |r| match r {
             Ok(devs) => {
-                app.win().player.set_devices(&devs);
+                app.win().player.set_devices(&devs, &|d| app.is_builtin_device(d));
                 *app.devices.borrow_mut() = devs;
             }
             Err(e) => app.notice(&format!("devices: {e}"), true),
@@ -1113,6 +1151,214 @@ impl App {
             let a = app.clone();
             glib::timeout_add_local_once(Duration::from_millis(800), move || a.refresh_devices());
         });
+    }
+
+    // --- built-in player ------------------------------------------------------------------------
+
+    fn builtin_wanted(&self) -> bool {
+        player::AVAILABLE && !demo_mode() && self.config.borrow().config.player.enabled
+    }
+
+    /// Whether `d` in Spotify's device list is this rtify's own player.
+    pub fn is_builtin_device(&self, d: &Device) -> bool {
+        if self.builtin.borrow().is_none() {
+            return false;
+        }
+        d.id.as_deref() == Some(player::device_id().as_str()) || d.name == player::device_name(&self.config.borrow().config.player)
+    }
+
+    pub fn builtin_status_text(&self) -> String {
+        let name = player::device_name(&self.config.borrow().config.player);
+        self.builtin_status.borrow().describe(&name)
+    }
+
+    fn set_builtin_status(&self, status: BuiltinStatus) {
+        *self.builtin_status.borrow_mut() = status;
+        self.show_builtin_status(&self.builtin_status_text());
+    }
+
+    fn show_builtin_status(&self, text: &str) {
+        if let Some(l) = self.builtin_label.borrow().as_ref().and_then(|w| w.upgrade()) {
+            l.set_text(text);
+        }
+    }
+
+    /// Run the built-in device for the signed-in account with its stored login. `restart` also
+    /// replaces one that already runs (new name or quality).
+    fn start_builtin_player(&self, restart: bool) {
+        if !self.builtin_wanted() {
+            return self.stop_builtin_player();
+        }
+        let Some(account) = self.account.borrow().clone() else { return };
+        let running = self.builtin.borrow().is_some() && self.builtin_account.borrow().as_deref() == Some(&account);
+        if running && !restart {
+            return;
+        }
+        let generation = self.builtin_gen.get();
+        let app = self.clone();
+        let who = account.clone();
+        spawn_then(async move { tokens::load(tokens::PLAYER_LOGIN, &who).await }, move |r| {
+            if app.builtin_gen.get() != generation || app.account.borrow().as_deref() != Some(&account) {
+                return;
+            }
+            match r {
+                Ok(Some(json)) => app.launch_builtin(player::Login::Stored(json)),
+                Ok(None) if running => app.set_builtin_status(BuiltinStatus::SignInNeeded("sign in again".into())),
+                Ok(None) => {
+                    app.set_builtin_status(BuiltinStatus::SignInNeeded("sign in once below".into()));
+                    app.notice(
+                        "built-in player: sign in once under settings → playback to play on this computer (or turn it off there)",
+                        false,
+                    );
+                }
+                Err(e) => app.set_builtin_status(BuiltinStatus::SignInNeeded(format!("Secret Service unavailable ({e})"))),
+            }
+        });
+    }
+
+    fn launch_builtin(&self, login: player::Login) {
+        let generation = self.builtin_gen.get() + 1;
+        self.builtin_gen.set(generation);
+        let settings = player::Settings::from_config(&self.config.borrow().config.player);
+        let (tx, rx) = async_channel::unbounded();
+        let previous = self.builtin.borrow_mut().take();
+        *self.builtin.borrow_mut() = Some(player::Handle::start(settings, login, tx, previous));
+        *self.builtin_account.borrow_mut() = self.account.borrow().clone();
+        self.set_builtin_status(BuiltinStatus::Connecting);
+        let app = self.clone();
+        runtime::forward(rx, move |ev| {
+            if app.builtin_gen.get() == generation {
+                app.builtin_event(ev);
+            }
+        });
+    }
+
+    fn stop_builtin_player(&self) {
+        self.builtin_gen.set(self.builtin_gen.get() + 1);
+        if let Some(handle) = self.builtin.borrow_mut().take() {
+            rt().spawn(handle.shutdown());
+            let a = self.clone();
+            glib::timeout_add_local_once(Duration::from_millis(1500), move || a.refresh_devices_if_online());
+        }
+        self.builtin_account.borrow_mut().take();
+        self.set_builtin_status(BuiltinStatus::Off);
+    }
+
+    fn refresh_devices_if_online(&self) {
+        if self.logged_in.get() {
+            self.refresh_devices();
+        }
+    }
+
+    fn builtin_event(&self, ev: player::Event) {
+        match ev {
+            player::Event::Status(status) => {
+                match &status {
+                    BuiltinStatus::Ready { username } => {
+                        if self.account.borrow().as_deref().is_some_and(|a| a != username) {
+                            self.notice(
+                                &format!("the built-in player signed in as {username}, not as this account · sign in again under settings → playback"),
+                                true,
+                            );
+                        }
+                        // Spotify lists a new device after a moment.
+                        let a = self.clone();
+                        glib::timeout_add_local_once(Duration::from_millis(1200), move || a.refresh_devices_if_online());
+                    }
+                    BuiltinStatus::SignInNeeded(why) => {
+                        self.builtin.borrow_mut().take();
+                        self.notice(&format!("built-in player: {why} · settings → playback → sign in"), true);
+                    }
+                    _ => {}
+                }
+                self.set_builtin_status(status);
+            }
+            player::Event::Login(json) => {
+                let Some(account) = self.builtin_account.borrow().clone() else {
+                    return;
+                };
+                let app = self.clone();
+                spawn_then(
+                    async move { tokens::store(tokens::PLAYER_LOGIN, &account, &json).await },
+                    move |r| {
+                        if let Err(e) = r {
+                            app.notice(&format!("built-in player: the login could not be stored in the Secret Service ({e}); you will need to sign in again next time"), true);
+                        }
+                    },
+                );
+            }
+            player::Event::Changed => self.schedule_poll(Duration::from_millis(300)),
+            player::Event::Audio(msg) => self.notice(&format!("built-in player: {msg}"), true),
+        }
+    }
+
+    /// Settings → playback → built-in player on/off.
+    pub fn set_builtin_enabled(&self, on: bool) {
+        self.update_config(|c| c.player.enabled = on);
+        if on {
+            self.start_builtin_player(false);
+        } else {
+            self.stop_builtin_player();
+        }
+    }
+
+    /// Name, quality or normalisation changed: restart the device once typing pauses.
+    pub fn builtin_settings_changed(&self) {
+        if let Some(id) = self.builtin_restart.borrow_mut().take() {
+            id.remove();
+        }
+        let app = self.clone();
+        let id = glib::timeout_add_local_once(Duration::from_millis(800), move || {
+            app.builtin_restart.borrow_mut().take();
+            if app.builtin.borrow().is_some() {
+                app.start_builtin_player(true);
+            }
+        });
+        *self.builtin_restart.borrow_mut() = Some(id);
+    }
+
+    /// One-time browser sign-in for the built-in player. It uses Spotify's own desktop client
+    /// (the only kind its streaming servers accept) with just the `streaming` scope; afterwards
+    /// the player keeps reusable credentials and never needs the browser again.
+    pub fn builtin_sign_in(&self) {
+        if !player::AVAILABLE {
+            return;
+        }
+        if !self.logged_in.get() || self.account.borrow().is_none() {
+            return self.show_builtin_status("sign in to Spotify first (above)");
+        }
+        let pkce = match auth::Pkce::new() {
+            Ok(p) => p,
+            Err(e) => return self.show_builtin_status(&e.to_string()),
+        };
+        let port = self.config.borrow().config.spotify.redirect_port;
+        let redirect = auth::player_redirect_uri(port);
+        let url = pkce.authorize_url_for(auth::PLAYER_CLIENT_ID, &redirect, auth::PLAYER_SCOPES);
+        self.show_builtin_status("waiting for the browser…");
+        let http = self.http.clone();
+        let app = self.clone();
+        let account = self.account.borrow().clone();
+        let (url_tx, url_rx) = async_channel::bounded::<()>(1);
+        spawn_then(
+            async move {
+                let listener = auth::listen(port).await?;
+                let _ = url_tx.send(()).await;
+                let code = auth::wait_for_code_at(listener, "/login", &pkce.state, Duration::from_secs(300)).await?;
+                let token = auth::exchange_code_for(&http, auth::PLAYER_CLIENT_ID, &code, &pkce.verifier, &redirect).await?;
+                Ok::<_, auth::AuthError>(token.access_token)
+            },
+            move |r| match r {
+                Ok(_) if *app.account.borrow() != account => {}
+                Ok(token) => {
+                    if !app.config.borrow().config.player.enabled {
+                        app.update_config(|c| c.player.enabled = true);
+                    }
+                    app.launch_builtin(player::Login::Token(token));
+                }
+                Err(e) => app.show_builtin_status(&format!("sign-in failed: {e}")),
+            },
+        );
+        self.open_browser_when_listening(url_rx, url);
     }
 
     fn update_tray(&self) {

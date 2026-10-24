@@ -1,14 +1,15 @@
 # Maintainer: everybodydies
 pkgname=rtify
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
-pkgdesc="Spotify Connect companion: System24/OLED look, tray, global shortcuts, animated lyrics"
+pkgdesc="Spotify client with a built-in Connect player: System24/OLED look, tray, global shortcuts, animated lyrics"
 arch=('x86_64')
 url="https://github.com/everybodydies/rtify"
 license=('GPL-3.0-or-later' 'OFL-1.1')
-depends=('gtk4' 'dbus' 'gcc-libs' 'glibc')
+depends=('gtk4' 'dbus' 'gcc-libs' 'glibc' 'libpulse')
 makedepends=('cargo')
 optdepends=(
+  'pipewire-pulse: sound for the built-in player on PipeWire desktops (or PulseAudio)'
   'xdg-desktop-portal-hyprland: global shortcuts on Hyprland'
   'gnome-keyring: Secret Service for the Spotify login (or KWallet / KeePassXC)'
   'noto-fonts-cjk: Japanese, Korean and Chinese lyrics'

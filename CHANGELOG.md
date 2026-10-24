@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-24
+
+- **Built-in player**: rtify can now play by itself. With the `builtin-player` feature (on by
+  default, and in the pacman package) it runs librespot as a Spotify Connect device named
+  "rtify on <hostname>", with sound through PipeWire/PulseAudio. Settings → playback turns it
+  on or off and has its one-time browser sign-in (Spotify's own client, scope `streaming`; the
+  reusable login goes to the Secret Service), device name, quality (96/160/320 kbit/s) and volume
+  normalisation. The device list marks it *this computer*; play with no active device prefers it
+  after the last-used device. It reconnects with backoff, never starts audio by itself, and leaves
+  Spotify's device lists when rtify quits. Needs Premium.
+- The package now depends on `libpulse` (provided by PipeWire's `pipewire-pulse` setups too).
+
 ## [0.1.0] - 2026-10-22
 
 First release, published as a pacman package and repository on GitHub Releases.

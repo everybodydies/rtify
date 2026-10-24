@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=rtify
-GenericName=Spotify Connect companion
-Comment=Control Spotify Connect devices with a System24 look, tray, global shortcuts and lyrics
+GenericName=Spotify client
+Comment=Play Spotify here or on any Connect device, with a System24 look, tray, global shortcuts and lyrics
 Exec=rtify %U
 Icon=io.github.everybodydies.rtify
 Terminal=false

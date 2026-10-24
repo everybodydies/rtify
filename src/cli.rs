@@ -9,7 +9,7 @@ use crate::commands::Command;
 #[command(
     name = "rtify",
     version,
-    about = "Spotify Connect companion with System24 styling, tray, global shortcuts and lyrics"
+    about = "Spotify client with System24 styling, tray, global shortcuts and lyrics"
 )]
 pub struct Cli {
     /// Start (or keep running) without showing the window.

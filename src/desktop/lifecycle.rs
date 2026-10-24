@@ -9,7 +9,7 @@ use crate::paths;
 
 pub fn autostart_entry(exec: &Path) -> String {
     format!(
-        "[Desktop Entry]\nType=Application\nName=rtify\nComment=Spotify Connect companion (background)\n\
+        "[Desktop Entry]\nType=Application\nName=rtify\nComment=Spotify client (background)\n\
          Exec={} --background\nIcon={}\nTerminal=false\nX-GNOME-Autostart-enabled=true\n\
          X-GNOME-Autostart-Delay=3\nX-KDE-autostart-after=panel\n",
         exec.display(),

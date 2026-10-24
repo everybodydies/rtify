@@ -1,4 +1,4 @@
-//! rtify: a Spotify Connect companion for Linux desktops (GTK 4).
+//! rtify: a Spotify client for Linux desktops (GTK 4).
 
 pub mod app;
 pub mod cli;
@@ -8,6 +8,7 @@ pub mod desktop;
 pub mod lyrics;
 pub mod paths;
 pub mod persistence;
+pub mod player;
 pub mod runtime;
 pub mod services;
 pub mod spotify;

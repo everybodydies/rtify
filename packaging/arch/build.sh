@@ -9,7 +9,7 @@ set -euo pipefail
 src=$(realpath "${SRC:-$(dirname "$0")/../..}")
 out=${OUT:-$src/dist}
 
-pacman -Syu --noconfirm --needed base-devel rust gtk4 dbus xorg-server-xvfb ttf-dejavu python >/dev/null
+pacman -Syu --noconfirm --needed base-devel rust gtk4 libpulse dbus xorg-server-xvfb ttf-dejavu python >/dev/null
 id builder >/dev/null 2>&1 || useradd -m builder
 
 ver=$(sed -n 's/^version = "\(.*\)"/\1/p' "$src/Cargo.toml" | head -1)

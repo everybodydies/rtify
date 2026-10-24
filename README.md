@@ -1,14 +1,16 @@
 # rtify
 
-A Spotify Connect companion for Linux desktops, written in Rust with GTK 4. It's the native sibling
+A Spotify client for Linux desktops, written in Rust with GTK 4. It's the native sibling
 of [qtify](https://github.com/everybodydies/qtify): a widescreen layout modeled on the official
 client, drawn in the **System24** style (monospace type, thin rectangular panels with the title set
 into the border, one accent) with an **OLED black** mode that is on by default, a **tray icon**,
 **global shortcuts**, settings and session state that survive restarts, and a **lyrics renderer**
 with word/syllable animation, romanization and optional translation.
 
-rtify *controls* Spotify: it drives whatever Spotify Connect device is active (phone, speaker,
-the desktop client) through the Web API. It does not play audio itself.
+rtify drives Spotify through the Web API, on whatever Spotify Connect device you pick (phone,
+speaker, the desktop client), and it can **play by itself**: its built-in player (librespot) makes
+this computer a Connect device of its own, with sound through PipeWire/PulseAudio. Both need
+Spotify Premium.
 
 > Built for CachyOS/Arch with Hyprland and Noctalia in mind. It works on any Wayland or X11 desktop
 > with GTK ≥ 4.14.
@@ -18,6 +20,7 @@ the desktop client) through the Web API. It does not play audio itself.
 | Area | State |
 | --- | --- |
 | Spotify sign-in (PKCE, no client secret), playback control, devices, library, search | done |
+| Built-in player: this computer as a Spotify Connect device (librespot, PipeWire/PulseAudio) | done |
 | System24 theme, fixed / Noctalia / album-art palettes, live switching with cross-fade | done |
 | Background operation (window hides, process stays), single instance, CLI actions | done |
 | StatusNotifierItem tray (`ksni`; Noctalia, Waybar, KDE …) | done |
@@ -123,6 +126,25 @@ Spotify only lets third-party apps in with their own client ID, and playback con
 
 The refresh token is stored in the Secret Service (GNOME Keyring, KWallet, KeePassXC …), never in
 a config file. Without a running Secret Service you have to sign in again after every start.
+
+### Built-in player (once)
+
+Settings → playback → *built-in player* (on by default) → **sign in**. A browser tab asks you to
+allow Spotify playback once more: Spotify's streaming servers only take logins from Spotify's own
+desktop client ID (librespot, spotifyd and ncspot sign in the same way), so this login uses that
+client with the single scope `streaming`, not your app. rtify keeps the reusable credentials that
+login returns in the Secret Service and never needs the browser for it again.
+
+The player then shows up as "rtify on <hostname>" in every Spotify device list, including rtify's
+own `⌁` menu (marked *this computer*). Picking it there, or pressing play while no device is
+active, plays on this computer. Settings has the device name, quality (96/160/320 kbit/s) and
+volume normalisation; turning the player off removes the device. Sound goes to the default
+PulseAudio/PipeWire output as the stream "rtify" (pick another output in pavucontrol or your
+mixer). Quitting rtify stops it; closing the window does not.
+
+librespot is an unofficial client. Spotify tolerates it (it is what spotifyd, ncspot and Raspotify
+run on), but it is not supported by Spotify. Builds without the default `builtin-player` cargo
+feature leave it out and need no libpulse.
 
 ## Using it
 
@@ -250,7 +272,8 @@ without Spotify.
 | `~/.local/state/rtify/session.json` | last track/context/selection/page, shuffle/repeat, device, per account |
 | `~/.config/rtify/noctalia.css` | written by the Noctalia template |
 | `~/.config/autostart/rtify.desktop` | written when *launch at login* is on |
-| Secret Service | Spotify refresh token, DeepL key |
+| `~/.local/state/rtify/player/volume` | last volume of the built-in player |
+| Secret Service | Spotify refresh token, built-in player login, DeepL key |
 
 An unreadable `config.toml` is moved aside as `config.toml.broken-<time>` and defaults are loaded.
 A file from a newer rtify is honoured where possible and never overwritten.
@@ -269,6 +292,7 @@ src/
 ├── cli.rs  commands.rs    one command set for buttons, keys, tray, portal and CLI
 ├── config.rs  paths.rs
 ├── persistence/           atomic writes, config store + migrations, session store
+├── player/                built-in Spotify Connect device (librespot), login, reconnects
 ├── theme/                 contrast math, System24 CSS, Noctalia, album palette, manager
 ├── lyrics/                model, LRC, TTML, LRCLIB, Google/DeepL translation, romanization/, synchronization
 ├── desktop/               tray (ksni), shortcuts (portal), MPRIS, lifecycle (autostart)

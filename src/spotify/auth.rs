@@ -25,12 +25,22 @@ pub const SCOPES: &[&str] = &[
     "user-follow-read",
 ];
 
+/// Spotify's own desktop client, the kind of app its streaming servers take a login from
+/// (librespot signs in with it too). Only the built-in player uses it, for this one scope.
+pub const PLAYER_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
+pub const PLAYER_SCOPES: &[&str] = &["streaming"];
+
 pub fn accounts_base() -> String {
     std::env::var("RTIFY_ACCOUNTS_BASE").unwrap_or_else(|_| "https://accounts.spotify.com".into())
 }
 
 pub fn redirect_uri(port: u16) -> String {
     format!("http://127.0.0.1:{port}/callback")
+}
+
+/// The redirect Spotify's desktop client accepts (any loopback port, path `/login`).
+pub fn player_redirect_uri(port: u16) -> String {
+    format!("http://127.0.0.1:{port}/login")
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -111,15 +121,19 @@ impl Pkce {
     }
 
     pub fn authorize_url(&self, client_id: &str, port: u16) -> String {
+        self.authorize_url_for(client_id, &redirect_uri(port), SCOPES)
+    }
+
+    pub fn authorize_url_for(&self, client_id: &str, redirect: &str, scopes: &[&str]) -> String {
         let mut url = url::Url::parse(&format!("{}/authorize", accounts_base())).expect("valid accounts base");
         url.query_pairs_mut()
             .append_pair("client_id", client_id)
             .append_pair("response_type", "code")
-            .append_pair("redirect_uri", &redirect_uri(port))
+            .append_pair("redirect_uri", redirect)
             .append_pair("code_challenge_method", "S256")
             .append_pair("code_challenge", &self.challenge)
             .append_pair("state", &self.state)
-            .append_pair("scope", &SCOPES.join(" "));
+            .append_pair("scope", &scopes.join(" "));
         url.into()
     }
 }
@@ -135,6 +149,16 @@ pub async fn listen(port: u16) -> Result<TcpListener, AuthError> {
 
 /// Accept connections until the `/callback` request arrives; returns the authorization code.
 pub async fn wait_for_code(listener: TcpListener, expected_state: &str, timeout: Duration) -> Result<String, AuthError> {
+    wait_for_code_at(listener, "/callback", expected_state, timeout).await
+}
+
+/// Like [`wait_for_code`], for a redirect with another path.
+pub async fn wait_for_code_at(
+    listener: TcpListener,
+    redirect_path: &str,
+    expected_state: &str,
+    timeout: Duration,
+) -> Result<String, AuthError> {
     let fut = async {
         loop {
             let Ok((mut sock, _)) = listener.accept().await else { continue };
@@ -142,7 +166,7 @@ pub async fn wait_for_code(listener: TcpListener, expected_state: &str, timeout:
             let n = sock.read(&mut buf).await.unwrap_or(0);
             let req = String::from_utf8_lossy(&buf[..n]);
             let path = req.split_whitespace().nth(1).unwrap_or("");
-            if !path.starts_with("/callback") {
+            if !path.starts_with(redirect_path) {
                 let _ = sock
                     .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                     .await;
@@ -195,13 +219,22 @@ async fn token_request(http: &reqwest::Client, form: &[(&str, &str)], old_refres
 }
 
 pub async fn exchange_code(http: &reqwest::Client, client_id: &str, code: &str, verifier: &str, port: u16) -> Result<Token, AuthError> {
-    let redirect = redirect_uri(port);
+    exchange_code_for(http, client_id, code, verifier, &redirect_uri(port)).await
+}
+
+pub async fn exchange_code_for(
+    http: &reqwest::Client,
+    client_id: &str,
+    code: &str,
+    verifier: &str,
+    redirect: &str,
+) -> Result<Token, AuthError> {
     token_request(
         http,
         &[
             ("grant_type", "authorization_code"),
             ("code", code),
-            ("redirect_uri", &redirect),
+            ("redirect_uri", redirect),
             ("client_id", client_id),
             ("code_verifier", verifier),
         ],
@@ -248,6 +281,31 @@ mod tests {
         assert!(url.contains("code_challenge_method=S256"));
         assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A8898%2Fcallback"));
         assert!(url.contains(&format!("state={}", p.state)));
+    }
+
+    #[test]
+    fn player_sign_in_uses_spotifys_client_and_login_path() {
+        let p = Pkce::new().unwrap();
+        let url = p.authorize_url_for(PLAYER_CLIENT_ID, &player_redirect_uri(8898), PLAYER_SCOPES);
+        assert!(url.contains("client_id=65b708073fc0480ea92a077233ca87bd"));
+        assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A8898%2Flogin"));
+        assert!(url.contains("scope=streaming&") || url.ends_with("scope=streaming"));
+    }
+
+    #[tokio::test]
+    async fn listener_ignores_other_paths() {
+        let listener = listen(0).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let task = tokio::spawn(wait_for_code_at(listener, "/login", "s2", Duration::from_secs(5)));
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        s.write_all(b"GET /callback?code=no&state=s2 HTTP/1.1\r\n\r\n").await.unwrap();
+        let mut out = String::new();
+        s.read_to_string(&mut out).await.unwrap();
+        assert!(out.starts_with("HTTP/1.1 404"));
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        s.write_all(b"GET /login?code=yes&state=s2 HTTP/1.1\r\n\r\n").await.unwrap();
+        s.read_to_string(&mut out).await.unwrap();
+        assert_eq!(task.await.unwrap().unwrap(), "yes");
     }
 
     #[tokio::test]

@@ -385,7 +385,8 @@ impl PlayerBar {
         self.updating.set(false);
     }
 
-    pub fn set_devices(&self, devices: &[Device]) {
+    /// `is_local`: the device is rtify's own built-in player.
+    pub fn set_devices(&self, devices: &[Device], is_local: &dyn Fn(&Device) -> bool) {
         clear_list(&self.devices);
         if devices.is_empty() {
             self.devices
@@ -410,6 +411,9 @@ impl PlayerBar {
             }
             meta.append(&label(&sub, &["rt-dim", "rt-small"]));
             row.append(&meta);
+            if is_local(d) {
+                row.append(&label("this computer", &["rt-dim", "rt-small"]));
+            }
             self.devices.append(&row);
         }
     }
