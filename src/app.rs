@@ -288,6 +288,10 @@ impl App {
             *app.playback.borrow_mut() = pb;
             if !s.page.is_empty() {
                 app.win().show_page(&s.page);
+                if s.page == "lyrics" {
+                    // Closing lyrics goes to the collection the library restores.
+                    *app.before_lyrics.borrow_mut() = "library".into();
+                }
             }
         }
         if app.config.borrow().config.window.compact {
@@ -811,6 +815,10 @@ impl App {
                         .unwrap_or_default();
                     app.win().show_page(if page.is_empty() { "home" } else { &page });
                     let shown = app.win().page();
+                    if shown == "lyrics" {
+                        // Closing lyrics goes to the collection restored below.
+                        *app.before_lyrics.borrow_mut() = "library".into();
+                    }
                     if let Some(p) = crate::ui::window::PAGES
                         .iter()
                         .find(|p| **p == shown && !matches!(**p, "library" | "lyrics" | "search"))

@@ -32,7 +32,7 @@ dbus-run-session -- bash -c '
     target/debug/rtify --show &
     pid=$!
     sleep 4
-    import -window root "'"$out"'/library.png"
+    import -window root "'"$out"'/home.png"
     target/debug/rtify --toggle-lyrics
     sleep 2.5
     import -window root "'"$out"'/lyrics.png"

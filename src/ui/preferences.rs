@@ -830,12 +830,16 @@ impl Builder {
         root.append(&head);
         let v = self.view.clone();
         reset_btn.connect_clicked(move |_| {
+            let followed = v.app.config.borrow().config.lyrics.follow_playback;
             v.app.update_config(reset);
             let a = v.app.clone();
             // Live consumers first, then rebuild the rows with the restored values.
             let appearance = a.config.borrow().config.appearance.clone();
             a.theme.set_appearance(&appearance);
             a.apply_lyrics_options();
+            if a.config.borrow().config.lyrics.follow_playback != followed {
+                a.lyrics_follow_changed();
+            }
             a.apply_layout();
             let v = v.clone();
             glib::idle_add_local_once(move || v.build());

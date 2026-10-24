@@ -63,7 +63,8 @@ class Handler(BaseHTTPRequestHandler):
         with lock:
             rule = next((r for r in rules if re.search(r["path"], path)
                          and re.fullmatch(r.get("method", ".*"), self.command)), None)
-            log.append(dict(t=time.time(), method=self.command, path=path, fault=bool(rule)))
+            log.append(dict(t=time.time(), method=self.command, path=path, query=urlparse(self.path).query,
+                            fault=bool(rule)))
         if rule:
             if rule.get("delay"):
                 time.sleep(rule["delay"])
