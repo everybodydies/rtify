@@ -226,6 +226,7 @@ label.rt-panel-title {{ color: {accent_text}; font-size: 0.85em; padding: 0 6px;
 label.rt-panel-meta {{ color: {text_faint}; font-size: 0.85em; padding: 0 6px; min-height: 18px;
                        background-image: linear-gradient(to bottom, {bg0} 50%, {bg1} 50%); }}
 overlay.rt-panel-host:hover > .rt-panel, overlay.rt-panel-host:focus-within > .rt-panel {{ border-color: {border_hover}; }}
+overlay.rt-panel-host.rt-drop-into > .rt-panel {{ border-color: {accent}; }}
 .rt-panel-body {{ padding: 14px 8px 8px 8px; }}
 .rt-frame-end {{ background: {bg0}; padding: 0 4px; }}
 button.rt-frame {{ background: {bg0}; color: {text_body}; font-size: 0.85em; min-height: 16px; padding: 0 6px; }}
@@ -282,6 +283,10 @@ button.rt-chip, button.rt-seg {{ color: {text_body}; padding: 1px 8px; min-heigh
 button.rt-chip:hover, button.rt-seg:hover {{ color: {text_bright}; }}
 button.rt-chip:checked, button.rt-seg:checked, button:checked {{ color: {accent_text}; border-color: {accent}; background: transparent; }}
 button.rt-current {{ color: {accent_text}; border-color: {accent}; }}
+/* joined chips (library type filter): shared 1px borders, the checked one framed in the accent */
+box.rt-segmented > button.rt-seg {{ border-left-width: 0; min-height: 24px; padding: 0 4px; }}
+box.rt-segmented > button.rt-seg:first-child {{ border-left-width: 1px; }}
+box.rt-segmented > button.rt-seg:checked:not(:first-child) {{ border-left-width: 1px; margin-left: -1px; }}
 button.rt-danger {{ background: {red}; color: {on_accent}; border-color: {red}; }}
 
 entry, spinbutton, dropdown > button, combobox > button {{ background: {bg1}; color: {text}; border: 1px solid {button_border}; border-radius: 0; box-shadow: none; caret-color: {accent}; min-height: 24px; }}
@@ -301,6 +306,9 @@ list > row:selected {{ background: {bg3}; color: {text_bright}; }}
 list > row:selected label.rt-row-title {{ color: {accent_text}; }}
 list > row.rt-playing label.rt-row-title, list > row.rt-playing label.rt-row-num {{ color: {accent_text}; }}
 list > row:focus-visible {{ outline: 2px solid {accent}; outline-offset: -2px; }}
+list > row.rt-drop-above {{ box-shadow: inset 0 2px 0 0 {accent}; }}
+list > row.rt-drop-below {{ box-shadow: inset 0 -2px 0 0 {accent}; }}
+box.rt-live-bar {{ background: {accent}; min-width: 2px; }}
 list.rt-nav > row {{ padding: 5px 8px; color: {text_body}; }}
 list.rt-nav > row:selected {{ color: {text_bright}; }}
 list.rt-nav > row:selected label {{ color: {text_bright}; }}
@@ -388,6 +396,10 @@ button.rt-th:hover {{ color: {text}; background: transparent; }}
 button.rt-th.rt-on {{ color: {accent_text}; }}
 
 /* one-click add: only visible on the hovered/selected row */
+/* the heart column of track rows: grey outline, the accent once liked */
+button.rt-heart {{ border-color: transparent; background: transparent; color: {text_faint}; padding: 0; min-width: 0; min-height: 0; }}
+button.rt-heart:hover {{ color: {text_bright}; border-color: transparent; background: transparent; }}
+button.rt-heart.rt-on, button.rt-heart.rt-on:hover {{ color: {accent_text}; }}
 button.rt-hover {{ opacity: 0; min-width: 0; padding: 0; }}
 list > row:hover button.rt-hover, list > row:selected button.rt-hover {{ opacity: 1; }}
 
@@ -395,6 +407,18 @@ list > row:hover button.rt-hover, list > row:selected button.rt-hover {{ opacity
 .rt-toast-content {{ padding: 0 8px 0 14px; }}
 .rt-toast label {{ color: {text_body}; }}
 .rt-toast-line {{ color: {accent_line}; }}
+/* rows and cards of a freshly opened list come in one after another (at most ~300 ms) */
+@keyframes rt-in {{ from {{ opacity: 0; transform: translateY(6px); }} to {{ opacity: 1; transform: none; }} }}
+.rt-in {{ animation: rt-in 120ms ease-out both; }}
+.rt-in-1 {{ animation-delay: 20ms; }}
+.rt-in-2 {{ animation-delay: 40ms; }}
+.rt-in-3 {{ animation-delay: 60ms; }}
+.rt-in-4 {{ animation-delay: 80ms; }}
+.rt-in-5 {{ animation-delay: 100ms; }}
+.rt-in-6 {{ animation-delay: 120ms; }}
+.rt-in-7 {{ animation-delay: 140ms; }}
+.rt-in-8 {{ animation-delay: 160ms; }}
+.rt-in-9 {{ animation-delay: 180ms; }}
 @keyframes rt-toast-in {{ from {{ opacity: 0; transform: translateY(14px) scale(0.96); }} to {{ opacity: 1; transform: none; }} }}
 @keyframes rt-toast-out {{ from {{ opacity: 1; transform: none; }} to {{ opacity: 0; transform: translateY(8px) scale(0.98); }} }}
 @keyframes rt-toast-bump-a {{ 0% {{ transform: scale(1); }} 40% {{ transform: scale(1.04); }} 100% {{ transform: scale(1); }} }}

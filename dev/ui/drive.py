@@ -14,6 +14,9 @@ mock Spotify API (dev/demo-server.py). Checks, in this order:
   undo         Ctrl+Z puts removed songs back in place, also after Spotify refused the first try
   instant      the heart and play button change on click, before Spotify answers, and the heart
                flips back when Spotify refuses
+  library      the "all" tab holds every other tab, clicking the open tab goes back to "all",
+               the sort button cycles its sorts and the arrow reverses them, a double click
+               plays a row, and a song's heart changes at once and reaches Spotify
   failures     Spotify rate limits (429), goes offline, gets slow, ends the session; LRCLIB is
                down; Spotify is unreachable when rtify starts
   keyboard     Tab reaches every control with a visible focus ring, Shift+Tab goes back, Enter
@@ -676,6 +679,100 @@ class Run:
         settle(4)
         self.check("instant", problems)
 
+    def library(self):
+        problems = []
+
+        def names():
+            lst = self.library_list()
+            return [c.get_name() for c in children(lst)] if lst else []
+
+        counts = {}
+        for tab in ("playlists", "albums", "artists", "all"):
+            self.open_library_tab(tab)
+            counts[tab] = len(names())
+        # Liked Songs head both "all" and "playlists", once.
+        if counts["all"] != counts["playlists"] + counts["albums"] + counts["artists"]:
+            problems.append(f"'all' shows {counts['all']} rows, the tabs {counts}")
+        self.open_library_tab("albums")
+        albums = first(self.frame, role="toggle button", name="albums")
+        do_click(albums)
+        settle(1)
+        everything = first(self.frame, role="toggle button", name="all")
+        if not everything or not pressed(everything) or pressed(albums):
+            problems.append("clicking the open tab again does not go back to 'all'")
+
+        self.open_library_tab("albums")
+        if not self.pick_sort("a-z"):
+            problems.append("the sort button does not reach 'a-z'")
+        shown = names()
+        if shown != sorted(shown, key=str.lower):
+            problems.append(f"albums sorted a-z: {shown}")
+        reverse = first(self.frame, role="toggle button", name="reverse order")
+        if reverse is None:
+            problems.append("no reverse order button")
+        else:
+            do_click(reverse)
+            settle(1)
+            if names() != shown[::-1]:
+                problems.append(f"reversed a-z: {names()}")
+            do_click(reverse)
+            settle(1)
+            if pressed(reverse) or names() != shown:
+                problems.append("reverse order does not switch back")
+        for sort in ("added", "creator", "custom", "recent"):
+            if not self.pick_sort(sort):
+                problems.append(f"the sort button does not reach {sort!r}")
+
+        # A double click plays the row; the player goes back to what it played afterwards.
+        before = self.api("GET", "/me/player")
+        self.open_library_tab("playlists")
+        t = time.time()
+        row = wait(lambda: first(self.library_list(), role="list item", name="Gym"), 5, "Gym")
+        x, y = center(row)
+        click_at(x, y)
+        click_at(x, y)
+        if not poll(lambda: any(r["path"] == "/v1/me/player/play" and r["method"] == "PUT" and r["t"] > t
+                                for r in self.requests_seen()), 5):
+            problems.append("double-clicking a library row does not play it")
+        elif not poll(lambda: (self.api("GET", "/me/player").get("context") or {}).get("uri", "").endswith(
+                next(p["id"] for p in self.api("GET", "/me/playlists?limit=50")["items"] if p["name"] == "Gym")), 5):
+            problems.append("double-clicking Gym plays something else")
+        if before.get("item"):
+            body = {"offset": {"uri": before["item"]["uri"]}, "position_ms": before.get("progress_ms") or 0}
+            if before.get("context"):
+                body["context_uri"] = before["context"]["uri"]
+            else:
+                body["uris"] = [before["item"]["uri"]]
+            self.api("PUT", "/me/player/play", body)
+            if not before.get("is_playing"):
+                self.api("PUT", "/me/player/pause")
+        settle(2)
+
+        # The heart column: changes at once, reaches Spotify, and goes back.
+        def liked_total():
+            return self.api("GET", "/me/tracks?limit=1")["total"]
+
+        hearts = [o for o in self.track_rows_buttons() if o.get_name() in ("like", "unlike")]
+        if not hearts:
+            problems.append("Gym's songs have no heart")
+        else:
+            heart = hearts[0]
+            was, total = heart.get_name(), liked_total()
+            do_click(heart)
+            if not poll(lambda: heart.get_name() != was, 0.8):
+                problems.append("a song's heart waits for Spotify before it changes")
+            want = total + (1 if was == "like" else -1)
+            if not poll(lambda: liked_total() == want, 5):
+                problems.append(f"a song's heart did not reach Spotify ({liked_total()} liked, want {want})")
+            do_click(heart)
+            if not poll(lambda: heart.get_name() == was and liked_total() == total, 5):
+                problems.append("a second click on a song's heart does not undo the first")
+        self.check("library", problems)
+
+    def track_rows_buttons(self):
+        return [o for row in self.track_rows() for o in walk(row)
+                if o.get_role_name() == "push button" and showing(o)]
+
     def failures(self):
         problems = []
 
@@ -1101,7 +1198,7 @@ class Run:
         albums = first(self.frame, role="toggle button", name="albums")
         if not albums or not pressed(albums):
             problems.append("the albums tab was open at quit but not after the restart")
-        if not first(self.frame, role="toggle button", name="a-z"):
+        if not first(self.frame, role="push button", name="sort: a-z"):
             problems.append("the library sort is back to 'recent'")
         panel = first(self.frame, role="toggle button", name=re.compile("now playing panel", re.I))
         if panel and pressed(panel):
@@ -1126,18 +1223,16 @@ class Run:
         self.check("restart", problems)
 
     def pick_sort(self, name):
-        """Choose an entry of the library's sort dropdown with the keyboard."""
-        current = first(self.frame, role="toggle button", name=re.compile("^(recent|a-z)$"))
-        if current is None:
-            return False
-        if current.get_name() == name:
-            return True
-        do_click(current)
-        settle(0.8)
-        key("Down" if name == "a-z" else "Up")
-        key("Return")
-        settle(0.8)
-        return poll(lambda: first(self.frame, role="toggle button", name=name), 3)
+        """Click the library's sort button in the frame line until it shows `name`."""
+        for _ in range(6):
+            current = first(self.frame, role="push button", name=re.compile("^sort: "))
+            if current is None:
+                return False
+            if current.get_name() == f"sort: {name}":
+                return True
+            do_click(current)
+            settle(0.6)
+        return False
 
     def big_playlist(self):
         """Timed from the proxy log and /proc, not the accessibility tree: walking 10 000 rows
@@ -1351,8 +1446,10 @@ class Run:
 
     def open_library_tab(self, name):
         tab = wait(lambda: first(self.frame, role="toggle button", name=name), 5, f"library tab {name}")
-        do_click(tab)
-        settle(1.5)
+        # Clicking the open tab again would go back to "all".
+        if not pressed(tab):
+            do_click(tab)
+            settle(1.5)
 
     def library_list(self):
         for o in walk(self.frame):
@@ -1769,7 +1866,7 @@ def wait(fn, timeout, what):
 
 
 CHECKS = ["geometry", "a11y-names", "screenshots", "scroll-jump", "mpris", "big-playlist", "history", "undo", "instant",
-          "keyboard", "keys", "click-all", "soak", "failures", "restart"]
+          "library", "keyboard", "keys", "click-all", "soak", "failures", "restart"]
 
 
 def main():

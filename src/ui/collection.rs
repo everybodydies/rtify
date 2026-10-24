@@ -177,6 +177,8 @@ pub struct ViewState {
     sync_queued: bool,
     /// Playlists/albums shown as cards (search results, artist albums).
     extra: Vec<Collection>,
+    /// The next rows built from the top come in staggered (a list was just opened).
+    animate: bool,
     cache: HashMap<String, Cached>,
 }
 
@@ -201,12 +203,16 @@ pub struct CollectionView {
     status: gtk::Label,
     scroll: gtk::ScrolledWindow,
     pub state: Rc<RefCell<ViewState>>,
+    /// Heart buttons of the built rows, by song, to follow liked state.
+    hearts: Rc<RefCell<Vec<Heart>>>,
     app: App,
 }
 
 /// Column header with the same character width as the cells below it.
 /// Natural width of the title column in pixels (it takes any extra room on wide windows).
 const TITLE_NATURAL: i32 = 320;
+/// The heart column: fixed, so liking a song never moves anything in its row.
+const HEART_WIDTH: i32 = 30;
 /// Album column width in characters: narrowest, widest.
 const ALBUM_CHARS: (i32, i32) = (14, 26);
 
@@ -231,6 +237,29 @@ fn header_button(text: &str, width_chars: i32, max_chars: i32, xalign: f32) -> g
     b.set_child(Some(&l));
     b.add_css_class("rt-th");
     b
+}
+
+/// The `k`-th row or card of a list that was just opened fades in a little after the one before.
+fn stagger(w: &impl IsA<gtk::Widget>, k: usize) {
+    w.add_css_class("rt-in");
+    if k > 0 {
+        w.add_css_class(&format!("rt-in-{}", k.min(9)));
+    }
+}
+
+/// A song's heart button in a built row, by song.
+type Heart = (String, glib::WeakRef<gtk::Button>);
+
+fn show_heart(b: &gtk::Button, liked: Option<bool>) {
+    let on = liked == Some(true);
+    b.set_label(if on { "♥" } else { "♡" });
+    if on {
+        b.add_css_class("rt-on");
+    } else {
+        b.remove_css_class("rt-on");
+    }
+    b.update_property(&[gtk::accessible::Property::Label(if on { "unlike" } else { "like" })]);
+    b.reset_relation(gtk::AccessibleRelation::LabelledBy);
 }
 
 impl CollectionView {
@@ -291,6 +320,8 @@ impl CollectionView {
         let album = header_button("album", ALBUM_CHARS.0, ALBUM_CHARS.1, 0.0);
         let album_col = Clamp::natural(&album, chars_px(ALBUM_CHARS.1));
         let added = header_button("added", 10, 10, 0.0);
+        let heart_gap = hbox(0);
+        heart_gap.set_size_request(HEART_WIDTH, -1);
         let time = header_button("time", 6, 6, 1.0);
         let plus_gap = hbox(0);
         plus_gap.set_size_request(26, -1);
@@ -299,6 +330,7 @@ impl CollectionView {
         head.append(&t_col);
         head.append(&album_col);
         head.append(&added);
+        head.append(&heart_gap);
         head.append(&time);
         head.append(&plus_gap);
         let headers = Rc::new(vec![
@@ -367,6 +399,7 @@ impl CollectionView {
             status,
             scroll: scroll.clone(),
             state: Rc::default(),
+            hearts: Rc::default(),
             app: app.clone(),
         };
 
@@ -553,6 +586,8 @@ impl CollectionView {
         }
     }
 
+    /// play · add to queue · add to <last playlist> (p) · add to playlist… · like/unlike · go
+    /// to artist · go to album, then removing and links.
     fn track_menu(&self) -> Menu {
         let tracks = self.selected_tracks();
         let uris: Vec<String> = tracks.iter().map(|t| t.uri.clone()).collect();
@@ -566,15 +601,21 @@ impl CollectionView {
         if n == 1 {
             let v = self.clone();
             let i = self.table.selected_rows().first().map(|r| self.position(r)).unwrap_or(0);
-            menu.item("play", move || v.play_from_display(i, false));
+            menu.item_hint("play", &a.key_label(crate::keymap::Action::PlaySelected), move || {
+                v.play_from_display(i, false)
+            });
         }
         let (a2, u) = (a.clone(), uris.clone());
         menu.item(if n == 1 { "add to queue" } else { "add to queue (all)" }, move || {
             a2.queue_uris(u.clone())
         });
-        if let Some(last) = a.last_playlist() {
+        let last = a.last_playlist();
+        if let Some(last) = last.clone() {
             let (a2, u, l) = (a.clone(), uris.clone(), last.clone());
-            menu.item(&format!("add to “{}”", last.name), move || a2.add_to_playlist(&l, u.clone()));
+            let key = a.key_label(crate::keymap::Action::AddToLastPlaylist);
+            menu.item_hint(&format!("add to “{}”", last.name), &key, move || {
+                a2.add_to_playlist(&l, u.clone())
+            });
         }
         let entries = a
             .editable_playlists()
@@ -582,30 +623,43 @@ impl CollectionView {
             .map(|p| {
                 let (a2, u) = (a.clone(), uris.clone());
                 let name = p.name.clone();
-                (name, Rc::new(move || a2.add_to_playlist(&p, u.clone())) as Rc<dyn Fn()>)
+                let hint = if last.as_ref().is_some_and(|l| l.uri == p.uri) {
+                    "last"
+                } else {
+                    ""
+                };
+                (
+                    name,
+                    hint.to_owned(),
+                    Rc::new(move || a2.add_to_playlist(&p, u.clone())) as Rc<dyn Fn()>,
+                )
             })
             .collect();
-        menu.submenu("add to playlist", entries);
-        if editable && let Some(c) = collection.clone() {
-            let (a2, u) = (a.clone(), uris.clone());
-            menu.item("remove from this playlist", move || a2.remove_from_playlist(&c, u.clone()));
-        }
+        menu.submenu("add to playlist…", entries);
+        // Like when any of them is not liked yet (or unknown), else unlike.
+        let all_liked =
+            collection.as_ref().is_some_and(|c| c.uri == LIKED_URI) || (!uris.is_empty() && uris.iter().all(|u| a.liked(u) == Some(true)));
         let (a2, u) = (a.clone(), uris.clone());
-        if collection.as_ref().is_some_and(|c| c.uri == LIKED_URI) {
+        if all_liked {
             menu.item("remove from liked songs", move || a2.set_saved_many(u.clone(), false));
         } else {
             menu.item("save to liked songs", move || a2.set_saved_many(u.clone(), true));
         }
-        menu.separator();
         if let [t] = tracks.as_slice() {
-            if let Some(album) = t.album.clone().filter(|al| !al.uri.is_empty()) {
-                let a2 = a.clone();
-                menu.item("go to album", move || a2.open_uri_view(&album.uri, &album.name));
-            }
             for artist in t.artists.iter().filter(|ar| !ar.uri.is_empty()).take(3) {
                 let (a2, ar) = (a.clone(), artist.clone());
-                menu.item(&format!("go to {}", artist.name), move || a2.open_uri_view(&ar.uri, &ar.name));
+                menu.item_hint("go to artist", &artist.name, move || a2.open_uri_view(&ar.uri, &ar.name));
             }
+            if let Some(album) = t.album.clone().filter(|al| !al.uri.is_empty()) {
+                let a2 = a.clone();
+                let name = album.name.clone();
+                menu.item_hint("go to album", &name, move || a2.open_uri_view(&album.uri, &album.name));
+            }
+        }
+        menu.separator();
+        if editable && let Some(c) = collection.clone() {
+            let (a2, u) = (a.clone(), uris.clone());
+            menu.item("remove from this playlist", move || a2.remove_from_playlist(&c, u.clone()));
         }
         let (a2, u) = (a.clone(), uris.clone());
         menu.item(if n == 1 { "copy link" } else { "copy links" }, move || a2.copy_links(&u));
@@ -622,7 +676,8 @@ impl CollectionView {
         while let Some(w) = self.cards.child_at_index(0) {
             self.cards.remove(&w);
         }
-        for col in &items {
+        let animate = self.app.motion();
+        for (k, col) in items.iter().enumerate() {
             let card = vbox(6);
             card.append(&cover_widget(&self.app, col, 132));
             let name = ellipsized(&col.name, &["rt-row-title"]);
@@ -638,6 +693,9 @@ impl CollectionView {
             b.connect_clicked(move |_| a.open_collection(c.clone(), true));
             let (a, c) = (self.app.clone(), col.clone());
             on_right_click(&b, move |_, _| Some(a.collection_menu(&c)));
+            if animate && k < 10 {
+                stagger(&b, k);
+            }
             self.cards.insert(&b, -1);
         }
         self.state.borrow_mut().extra = items;
@@ -722,6 +780,7 @@ impl CollectionView {
     /// Switch to `c` and clear the table; tracks arrive through `append`.
     pub fn show(&self, c: &Collection, editable: bool) {
         self.stash();
+        self.state.borrow_mut().animate = true;
         self.set_header(c, editable);
         self.set_cards(None, Vec::new());
         self.status.set_text("loading…");
@@ -739,6 +798,7 @@ impl CollectionView {
             }
         };
         let Some(cached) = cached else { return false };
+        self.state.borrow_mut().animate = true;
         self.set_header(&cached.collection, editable);
         let extra = cached.extra.clone();
         if !extra.is_empty() {
@@ -814,6 +874,35 @@ impl CollectionView {
         self.render_rows();
     }
 
+    /// ♥ / ♡ for a song; a click likes or unlikes it. Not a Tab stop (the menu and the player's
+    /// heart do the same from the keyboard).
+    fn heart(&self, uri: &str) -> gtk::Button {
+        let b = gtk::Button::new();
+        b.add_css_class("rt-heart");
+        b.set_focusable(false);
+        b.set_valign(gtk::Align::Center);
+        b.set_size_request(HEART_WIDTH, -1);
+        show_heart(&b, self.app.liked(uri));
+        let (a, u) = (self.app.clone(), uri.to_owned());
+        b.connect_clicked(move |_| {
+            let on = a.liked(&u) != Some(true);
+            a.set_saved_many(vec![u.clone()], on);
+        });
+        self.hearts.borrow_mut().push((uri.to_owned(), b.downgrade()));
+        b
+    }
+
+    /// Bring the hearts of the built rows up to date with what is known.
+    pub fn refresh_hearts(&self) {
+        self.hearts.borrow_mut().retain(|(uri, w)| match w.upgrade() {
+            Some(b) => {
+                show_heart(&b, self.app.liked(uri));
+                true
+            }
+            None => false,
+        });
+    }
+
     fn make_row(&self, number: usize, r: &TrackRow, show_added: bool, playing: Option<&str>) -> gtk::ListBoxRow {
         let t = &r.track;
         let row = gtk::ListBoxRow::new();
@@ -852,6 +941,7 @@ impl CollectionView {
         );
         added.set_width_chars(10);
         b.append(&added);
+        b.append(&self.heart(&t.uri));
         let time = label(&fmt_time(t.duration_ms), &["rt-faint", "rt-mono-num", "rt-small"]);
         time.set_width_chars(6);
         time.set_xalign(1.0);
@@ -963,9 +1053,17 @@ impl CollectionView {
             let rows: Vec<TrackRow> = st.display[from..to].iter().map(|&i| st.rows[i].clone()).collect();
             (rows, st.rows.iter().any(|r| !r.added_at.is_empty()), st.playing_uri.clone())
         };
+        self.app.want_liked(rows.iter().map(|r| r.track.uri.clone()).collect());
+        let animate = std::mem::take(&mut self.state.borrow_mut().animate) && from == 0 && self.app.motion();
         rows.iter()
             .enumerate()
-            .map(|(k, r)| self.make_row(from + k + 1, r, show_added, playing.as_deref()))
+            .map(|(k, r)| {
+                let row = self.make_row(from + k + 1, r, show_added, playing.as_deref());
+                if animate && k < 10 {
+                    stagger(&row, k);
+                }
+                row
+            })
             .collect()
     }
 
@@ -1119,6 +1217,9 @@ impl CollectionView {
         if self.uri().as_deref() != Some(uri) {
             return;
         }
+        if uri == LIKED_URI {
+            self.app.note_liked(rows.iter().map(|r| r.track.uri.clone()), true);
+        }
         let custom = self.state.borrow().sort.key == SortKey::Custom;
         let start = {
             let mut st = self.state.borrow_mut();
@@ -1209,6 +1310,11 @@ impl CollectionView {
     }
 
     /// Drop rows from the shown list after a successful removal (and from its cache).
+    pub fn track_name(&self, uri: &str) -> Option<String> {
+        let st = self.state.borrow();
+        st.rows.iter().find(|r| r.track.uri == uri).map(|r| r.track.name.clone())
+    }
+
     pub fn remove_uris(&self, playlist_uri: &str, uris: &[String]) {
         self.invalidate(playlist_uri);
         if self.uri().as_deref() != Some(playlist_uri) {

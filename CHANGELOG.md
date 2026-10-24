@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-24
+
+Library and track lists from the Sys24 design.
+
+- Library chips: **all** (playlists, albums and artists together), playlists, albums, artists;
+  clicking the open chip goes back to all.
+- Sort in the library's frame line: `recent`, `added` (newest saves first), `a-z`, `creator`
+  and `custom`, cycled by a click, with `↓`/`↑` to reverse. Dragging a library row moves it and
+  switches to `custom`; the order is kept in `[library] custom_order`, the direction in
+  `sort_reversed`.
+- A double click on a library row plays it; the collection playing now carries three accent
+  bars.
+- Track lists get a heart column: it shows at once whether each song is liked (asked in
+  batches of 40) and changes on click before Spotify answers.
+- The song menu follows the design: play, add to queue, add to the last playlist, add to
+  playlist… as a submenu, save to / remove from liked songs, go to artist / album with their
+  names, copy link; keys show next to their entries.
+- Dropping songs on the queue panel queues them (Spotify cannot reorder the queue).
+- The first rows and cards of a page fade in one after another (no motion with animations off or
+  reduced motion on).
+
 ## [0.4.0] - 2026-10-24
 
 Player bar, toasts and keys from the Sys24 design.

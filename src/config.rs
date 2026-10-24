@@ -223,9 +223,14 @@ impl Default for Lyrics {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Library {
+    /// Type chip: "all", "playlists", "albums" or "artists".
     pub last_tab: String,
     pub filter: String,
+    /// "recent", "added", "a-z", "creator" or "custom".
     pub sort: String,
+    pub sort_reversed: bool,
+    /// Library URIs in the order dragged into ("custom" sort).
+    pub custom_order: Vec<String>,
     /// Song order per playlist/album URI ("title:asc", "added:desc" …); absent = custom order.
     pub track_sort: BTreeMap<String, String>,
     /// New releases: "all", "albums" or "singles".
@@ -241,6 +246,8 @@ impl Default for Library {
             track_sort: BTreeMap::new(),
             filter: String::new(),
             sort: "recent".into(),
+            sort_reversed: false,
+            custom_order: Vec::new(),
             releases_filter: "all".into(),
             recent_searches: Vec::new(),
         }

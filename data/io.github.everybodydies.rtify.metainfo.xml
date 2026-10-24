@@ -55,6 +55,11 @@
   </supports>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.5.0" date="2026-10-24">
+      <description>
+        <p>Library sorting with your own order, a heart column in track lists, a fuller song menu.</p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-10-24">
       <description>
         <p>Rebindable keys with mute, framed player bar controls, animated notifications.</p>

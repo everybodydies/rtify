@@ -200,6 +200,16 @@ rtify --background            # start without a window (what autostart uses)
 Starting rtify never starts audio by itself. It reconnects, shows the last-known track until
 Spotify answers, and then shows what is actually playing.
 
+The library has chips for **all**, playlists, albums and artists (click the open chip again to go
+back to all) and, in its frame line, the sort (`recent`, `added`, `a-z`, `creator`, `custom`;
+click to cycle) with `↓`/`↑` to reverse it. Drag a library row up or down to put it in your own
+order (that switches to `custom`); drop songs on a playlist row to add them. A double click plays
+a row, and three small accent bars mark the one playing now. Track lists have a heart column
+(click to like or unlike), and a song's right-click menu has play, add to queue, add to the last
+playlist, add to playlist… (a submenu), like/unlike, go to artist or album, and copy link. Songs
+dragged onto the queue panel are queued; Spotify's API cannot reorder or remove queued songs, so
+the queue itself stays read-only.
+
 ### Tray
 
 Left click shows/hides the window, middle click plays/pauses, scrolling changes the volume. The
