@@ -47,7 +47,9 @@ pub const RIGHT_WIDTH: (i32, i32) = (240, 440);
 /// The confirmation that floats above the player bar (see `MainWindow::toast`).
 #[derive(Clone)]
 struct Toast {
-    root: gtk::Box,
+    /// A revealer without its own transition (CSS animates): the toast stays in the
+    /// accessibility tree while hidden, like before.
+    root: gtk::Revealer,
     /// The framed box; it pulses when the text changes.
     frame: gtk::Box,
     label: gtk::Label,
@@ -75,12 +77,14 @@ impl Toast {
         frame.add_css_class("rt-toast");
         frame.append(&content);
         frame.append(&line);
-        let root = vbox(0);
-        root.append(&frame);
-        root.set_halign(gtk::Align::Center);
-        root.set_valign(gtk::Align::End);
-        root.set_margin_bottom(20);
-        root.set_visible(false);
+        let root = gtk::Revealer::builder()
+            .child(&frame)
+            .transition_type(gtk::RevealerTransitionType::None)
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::End)
+            .margin_bottom(20)
+            .reveal_child(false)
+            .build();
         let started: Rc<Cell<Option<(std::time::Instant, std::time::Duration)>>> = Rc::default();
         let st = started.clone();
         line.set_draw_func(move |area, cr, w, h| {
@@ -693,7 +697,7 @@ impl MainWindow {
         if let Some(id) = t.timer.take() {
             id.remove();
         }
-        let showing = t.root.is_visible() && !t.root.has_css_class("rt-toast-out");
+        let showing = t.root.reveals_child() && !t.root.has_css_class("rt-toast-out");
         for c in ["rt-toast-in", "rt-toast-out"] {
             t.root.remove_css_class(c);
         }
@@ -713,7 +717,7 @@ impl MainWindow {
                 t.root.add_css_class("rt-toast-in");
             }
         }
-        t.root.set_visible(true);
+        t.root.set_reveal_child(true);
         let shown = std::time::Duration::from_millis(if undo { 6000 } else { 2200 });
         t.line.set_visible(motion);
         t.started.set(Some((std::time::Instant::now(), shown)));
@@ -723,7 +727,7 @@ impl MainWindow {
             let t = &t2;
             t.started.set(None);
             if !motion {
-                t.root.set_visible(false);
+                t.root.set_reveal_child(false);
                 t.timer.take();
                 return;
             }
@@ -732,7 +736,7 @@ impl MainWindow {
             let t3 = t.clone();
             let id = glib::timeout_add_local_once(std::time::Duration::from_millis(200), move || {
                 t3.timer.take();
-                t3.root.set_visible(false);
+                t3.root.set_reveal_child(false);
                 t3.root.remove_css_class("rt-toast-out");
             });
             t.timer.set(Some(id));
