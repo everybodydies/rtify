@@ -754,10 +754,13 @@ class Run:
             problems.append("every song in the demo queue already has lyrics; LRCLIB-down case not tested")
         if not poll(lambda: in_player_bar(playing()), 30):
             problems.append(f"rtify did not pick up the track change to {playing()!r} within 30 s")
+        toggled = time.time()
         cli("--toggle-lyrics")
         if not poll(lambda: label("lyrics service unreachable"), 25):
             shown = [o.get_name() for o in walk(self.frame) if o.get_role_name() == "label" and "lyric" in (o.get_name() or "")]
-            problems.append(f"with LRCLIB down the lyrics page does not say so ({shown})")
+            asked = [f'{r["path"]} +{r["t"] - toggled:.1f}s' for r in self.requests_seen()
+                     if r["path"].startswith("/api/") and r["t"] > toggled - 5]
+            problems.append(f"with LRCLIB down the lyrics page does not say so ({shown}; LRCLIB asked: {asked})")
         cli("--toggle-lyrics")
         self.faults([])
 
