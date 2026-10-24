@@ -106,6 +106,32 @@ impl NowPlayingPanel {
                 a.player(PlayerOp::Like(b.is_active()));
             }
         });
+        // Songs dragged from a list onto the queue panel go into the queue. (Spotify's queue
+        // cannot be reordered from outside, so it only takes additions.)
+        let drop = gtk::DropTarget::new(gtk::glib::Type::STRING, gdk::DragAction::COPY);
+        let host = this.queue_root.clone();
+        drop.connect_enter(move |_, _, _| {
+            host.add_css_class("rt-drop-into");
+            gdk::DragAction::COPY
+        });
+        let host = this.queue_root.clone();
+        drop.connect_leave(move |_| host.remove_css_class("rt-drop-into"));
+        let (a, host) = (app.clone(), this.queue_root.clone());
+        drop.connect_drop(move |_, value, _, _| {
+            host.remove_css_class("rt-drop-into");
+            let Ok(text) = value.get::<String>() else { return false };
+            let uris: Vec<String> = text
+                .lines()
+                .filter(|l| l.starts_with("spotify:track:") || l.starts_with("spotify:episode:"))
+                .map(String::from)
+                .collect();
+            if uris.is_empty() {
+                return false;
+            }
+            a.queue_uris(uris);
+            true
+        });
+        this.queue_root.add_controller(drop);
         this
     }
 

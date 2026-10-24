@@ -8,6 +8,9 @@ use gtk::{gdk, prelude::*};
 
 use super::widgets::*;
 
+/// A submenu entry: its text, a faint hint after it, and what it does.
+pub type SubmenuEntry = (String, String, Rc<dyn Fn()>);
+
 /// Menu contents; the popover showing them belongs to the parent widget and is reused, never
 /// destroyed (destroying popovers can leave GTK 4.14 delivering pointer motion to a dead surface,
 /// which crashed during drag-and-drop).
@@ -58,11 +61,26 @@ fn show_page(popover: &Rc<RefCell<Option<gtk::Popover>>>, switching: &Cell<bool>
 }
 
 fn item_button(text: &str) -> gtk::Button {
+    item_button_hint(text, "")
+}
+
+fn item_button_hint(text: &str, hint: &str) -> gtk::Button {
     let l = label(text, &[]);
     l.set_xalign(0.0);
     let b = gtk::Button::new();
-    b.set_child(Some(&l));
     b.add_css_class("rt-menu-item");
+    if hint.is_empty() {
+        b.set_child(Some(&l));
+        return b;
+    }
+    l.set_hexpand(true);
+    let row = hbox(16);
+    row.append(&l);
+    let h = ellipsized(hint, &["rt-faint", "rt-small"]);
+    h.set_max_width_chars(16);
+    row.append(&h);
+    b.set_child(Some(&row));
+    b.update_property(&[gtk::accessible::Property::Label(text)]);
     b
 }
 
@@ -76,7 +94,12 @@ impl Menu {
     }
 
     pub fn item(&self, text: &str, f: impl Fn() + 'static) -> &Self {
-        let b = item_button(text);
+        self.item_hint(text, "", f)
+    }
+
+    /// An entry with grey text at its right end: its key ("p"), or what it leads to.
+    pub fn item_hint(&self, text: &str, hint: &str, f: impl Fn() + 'static) -> &Self {
+        let b = item_button_hint(text, hint);
         let pop = self.popover.clone();
         b.connect_clicked(move |_| {
             popdown(&pop);
@@ -94,8 +117,8 @@ impl Menu {
         self
     }
 
-    /// A submenu of `(label, action)` entries, with a filter field when the list is long.
-    pub fn submenu(&self, text: &str, entries: Vec<(String, Rc<dyn Fn()>)>) -> &Self {
+    /// A submenu of `(label, hint, action)` entries, with a filter field when the list is long.
+    pub fn submenu(&self, text: &str, entries: Vec<SubmenuEntry>) -> &Self {
         let page = vbox(0);
         let back = item_button(&format!("‹ {text}"));
         back.add_css_class("rt-menu-back");
@@ -108,8 +131,8 @@ impl Menu {
             page.append(&filter);
         }
         let mut buttons = Vec::new();
-        for (name, f) in entries {
-            let b = item_button(&name);
+        for (name, hint, f) in entries {
+            let b = item_button_hint(&name, &hint);
             let pop = self.popover.clone();
             b.connect_clicked(move |_| {
                 popdown(&pop);
@@ -136,7 +159,7 @@ impl Menu {
         page.append(&scroll);
         let (main, pop, sw) = (self.main.clone(), self.popover.clone(), self.switching.clone());
         back.connect_clicked(move |_| show_page(&pop, &sw, &main));
-        let opener = item_button(&format!("{text}  ▸"));
+        let opener = item_button_hint(text, "›");
         let (pop, sw) = (self.popover.clone(), self.switching.clone());
         opener.connect_clicked(move |_| show_page(&pop, &sw, &page));
         self.main.append(&opener);

@@ -67,7 +67,7 @@ type UndoOp = undo::UndoOp<Collection>;
 /// Back/forward history of the main view.
 #[derive(Debug, Clone)]
 enum Nav {
-    Collection(Collection),
+    Collection(Box<Collection>),
     Search(String),
     /// Home, new releases or settings.
     Page(&'static str),
@@ -98,6 +98,9 @@ pub struct Inner {
     account: RefCell<Option<String>>,
     display_name: RefCell<Option<String>>,
     saved_current: Cell<Option<bool>>,
+    /// Liked (saved) state of songs seen in lists, and the ones being asked about.
+    liked: RefCell<std::collections::HashMap<String, bool>>,
+    liked_asking: RefCell<std::collections::HashSet<String>>,
     logged_in: Cell<bool>,
     window: OnceCell<MainWindow>,
     /// The page the lyrics toggle goes back to.
@@ -239,6 +242,8 @@ impl App {
             account: RefCell::default(),
             display_name: RefCell::default(),
             saved_current: Cell::new(None),
+            liked: RefCell::default(),
+            liked_asking: RefCell::default(),
             logged_in: Cell::new(false),
             window: OnceCell::new(),
             before_lyrics: RefCell::new("home".into()),
@@ -1063,6 +1068,12 @@ impl App {
         self.win().update_playback(&pb, self.saved_current.get());
         let here = pb.playing && pb.device.as_ref().is_some_and(|d| self.is_builtin_device(d));
         self.win().player.set_playing_here(here);
+        // Liked Songs play as the user's "collection" context.
+        let live = pb
+            .context_uri
+            .as_deref()
+            .map(|u| if u.ends_with(":collection") { LIKED_URI } else { u });
+        self.win().sidebar.set_live(live);
         self.update_mpris(&pb);
     }
 
@@ -1091,10 +1102,11 @@ impl App {
             let client = self.client();
             let app = self.clone();
             let uri = track.uri.clone();
-            spawn_then(async move { client.is_saved(&uri).await }, move |r| {
-                if let Ok(saved) = r {
+            spawn_then(async move { client.is_saved(&uri).await.map(|s| (uri, s)) }, move |r| {
+                if let Ok((uri, saved)) = r {
                     app.saved_current.set(Some(saved));
                     app.refresh_player_ui();
+                    app.note_liked([uri], saved);
                 }
             });
         }
@@ -1267,6 +1279,7 @@ impl App {
                 };
                 self.saved_current.set(Some(on));
                 self.refresh_player_ui();
+                self.note_liked([uri.clone()], on);
                 let client = self.client();
                 let app = self.clone();
                 let track = uri.clone();
@@ -1277,6 +1290,7 @@ impl App {
                     if r.is_err() && same && app.saved_current.get() == Some(on) {
                         app.saved_current.set(Some(!on));
                         app.refresh_player_ui();
+                        app.note_liked([uri.clone()], !on);
                     }
                     app.after_command(r);
                 });
@@ -1573,7 +1587,10 @@ impl App {
                 for _ in 0..4 {
                     let page = client.saved_albums(offset).await?;
                     let n = page.items.len() as u32;
-                    albums.extend(page.items.iter().map(|s| Collection::from_album(&s.album)));
+                    albums.extend(page.items.iter().map(|s| Collection {
+                        added_at: s.added_at.clone(),
+                        ..Collection::from_album(&s.album)
+                    }));
                     if page.next.is_none() || n == 0 {
                         break;
                     }
@@ -1647,7 +1664,7 @@ impl App {
         // Prefer the full library entry (owner, images) when we only have a uri and a name.
         let c = self.win().sidebar.find(&c.uri).filter(|f| f.kind == c.kind).unwrap_or(c);
         if record {
-            self.push_history(Nav::Collection(c.clone()));
+            self.push_history(Nav::Collection(Box::new(c.clone())));
         }
         let editable = self.is_editable(&c);
         let w = self.win();
@@ -1692,7 +1709,7 @@ impl App {
         };
         self.win().set_history_buttons(back, forward);
         match nav {
-            Nav::Collection(c) => self.open_collection(c, false),
+            Nav::Collection(c) => self.open_collection(*c, false),
             Nav::Search(q) => {
                 self.show_view("search", false);
                 self.win().search.set_query(&q);
@@ -2066,12 +2083,19 @@ impl App {
         w.collection.focus_filter();
     }
 
+    /// The key bound to `a`, as shown to people ("p", "enter"); empty when unbound.
+    pub fn key_label(&self, a: keymap::Action) -> String {
+        keymap::label(keymap::key_of(&self.config.borrow().config.shortcuts.keys, a))
+    }
+
+    /// Animations are on and reduced motion is off.
+    pub fn motion(&self) -> bool {
+        let a = &self.config.borrow().config.appearance;
+        a.animations_enabled && !a.reduced_motion
+    }
+
     pub fn toast(&self, text: &str, undo: bool) {
-        let motion = {
-            let a = &self.config.borrow().config.appearance;
-            a.animations_enabled && !a.reduced_motion
-        };
-        self.win().toast(text, undo, motion);
+        self.win().toast(text, undo, self.motion());
     }
 
     pub fn queue_uris(&self, uris: Vec<String>) {
@@ -2176,23 +2200,27 @@ impl App {
                 Ok(fresh) if fresh.is_empty() => app.toast(&format!("already in “{}”", p.name), false),
                 Ok(fresh) => {
                     let n = fresh.len();
+                    let what = match fresh.as_slice() {
+                        [one] => app.track_name(one).unwrap_or_else(|| "1 song".into()),
+                        _ => format!("{n} songs"),
+                    };
                     app.after_playlist_edit(&p, n as i64);
                     app.undo.borrow_mut().push(UndoOp::Added {
                         playlist: p.clone(),
                         uris: fresh,
                     });
-                    app.toast(
-                        &format!(
-                            "added {} to “{}”",
-                            if n == 1 { "1 song".into() } else { format!("{n} songs") },
-                            p.name
-                        ),
-                        true,
-                    );
+                    app.toast(&format!("added {what} to “{}”", p.name), true);
                 }
                 Err(e) => app.after_command(Err(e)),
             },
         );
+    }
+
+    /// A song's title from the open list or the player, when it is there.
+    fn track_name(&self, uri: &str) -> Option<String> {
+        let pb = self.playback.borrow();
+        let playing = pb.track.as_ref().filter(|t| t.uri == uri).map(|t| t.name.clone());
+        playing.or_else(|| self.win().collection.track_name(uri))
     }
 
     pub fn remove_from_playlist(&self, p: &Collection, uris: Vec<String>) {
@@ -2299,13 +2327,102 @@ impl App {
         self.notice(&format!("could not undo ({}) · press undo again to retry", explain(&e)), true);
     }
 
+    /// Whether a song is liked, when known.
+    pub fn liked(&self, uri: &str) -> Option<bool> {
+        self.liked.borrow().get(uri).copied()
+    }
+
+    /// Record liked states learned or changed; the hearts in the list follow.
+    pub fn note_liked(&self, uris: impl IntoIterator<Item = String>, on: bool) {
+        {
+            let mut liked = self.liked.borrow_mut();
+            for u in uris {
+                liked.insert(u, on);
+            }
+        }
+        if let Some(w) = self.try_win() {
+            w.collection.refresh_hearts();
+        }
+    }
+
+    /// Ask Spotify about songs whose liked state is not known yet (the rows just built).
+    pub fn want_liked(&self, uris: Vec<String>) {
+        let ask: Vec<String> = {
+            let (liked, mut asking) = (self.liked.borrow(), self.liked_asking.borrow_mut());
+            let mut ask = Vec::new();
+            for u in uris {
+                if u.starts_with("spotify:track:") && !liked.contains_key(&u) && asking.insert(u.clone()) {
+                    ask.push(u);
+                }
+            }
+            ask
+        };
+        if ask.is_empty() {
+            return;
+        }
+        if !self.logged_in.get() {
+            let mut asking = self.liked_asking.borrow_mut();
+            for u in &ask {
+                asking.remove(u);
+            }
+            return;
+        }
+        let client = self.client();
+        let app = self.clone();
+        spawn_then(
+            async move {
+                match client.saved_many(&ask).await {
+                    Ok(r) => Ok((ask, r)),
+                    Err(e) => Err((ask, e)),
+                }
+            },
+            move |r| match r {
+                Ok((ask, saved)) => {
+                    {
+                        let mut asking = app.liked_asking.borrow_mut();
+                        let mut liked = app.liked.borrow_mut();
+                        for (u, on) in ask.into_iter().zip(saved) {
+                            asking.remove(&u);
+                            liked.insert(u, on);
+                        }
+                    }
+                    app.win().collection.refresh_hearts();
+                }
+                Err((ask, e)) => {
+                    // Asked again when the rows are built next time.
+                    let mut asking = app.liked_asking.borrow_mut();
+                    for u in &ask {
+                        asking.remove(u);
+                    }
+                    log::debug!("liked state: {e}");
+                }
+            },
+        );
+    }
+
     pub fn set_saved_many(&self, uris: Vec<String>, on: bool) {
         let n = uris.len();
         let current = self.playback.borrow().track_uri().map(String::from);
+        // Hearts flip right away and flip back if Spotify refuses.
+        let before: Vec<(String, Option<bool>)> = uris.iter().map(|u| (u.clone(), self.liked(u))).collect();
+        self.note_liked(uris.clone(), on);
         let client = self.client();
         let app = self.clone();
         let list = uris.clone();
         spawn_then(async move { client.set_saved_many(&list, on).await }, move |r| match r {
+            Err(e) => {
+                {
+                    let mut liked = app.liked.borrow_mut();
+                    for (u, was) in before {
+                        match was {
+                            Some(v) => liked.insert(u, v),
+                            None => liked.remove(&u),
+                        };
+                    }
+                }
+                app.win().collection.refresh_hearts();
+                app.after_command(Err(e));
+            }
             Ok(()) => {
                 if current.as_ref().is_some_and(|c| uris.contains(c)) {
                     app.saved_current.set(Some(on));
@@ -2330,7 +2447,6 @@ impl App {
                     false,
                 );
             }
-            Err(e) => app.after_command(Err(e)),
         });
     }
 
@@ -2398,7 +2514,10 @@ impl App {
                 for _ in 0..4 {
                     let page = client.saved_albums(offset).await?;
                     let n = page.items.len() as u32;
-                    albums.extend(page.items.iter().map(|s| Collection::from_album(&s.album)));
+                    albums.extend(page.items.iter().map(|s| Collection {
+                        added_at: s.added_at.clone(),
+                        ..Collection::from_album(&s.album)
+                    }));
                     if page.next.is_none() || n == 0 {
                         break;
                     }

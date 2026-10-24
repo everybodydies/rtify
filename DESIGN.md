@@ -437,6 +437,22 @@ spielt, sonst `border`. Der Rahmen der Lautstärke leuchtet anteilig (halbe Laut
 Rahmen in `accent-2`). Keine Tastenhinweise in Tooltips; Tasten stehen in Einstellungen →
 shortcuts.
 
+### Chips (segmentiert)
+Gerahmte Umschalter dicht nebeneinander, `24px` hoch; die Rahmen teilen sich eine Linie.
+Der aktive Chip trägt den Akzentrahmen (alle vier Seiten, mit `margin-left:-1px` über die
+geteilte Linie gelegt, kein Schatten). In der Bibliothek führt ein Klick auf den offenen Chip
+zurück zu „all“. Sortierung und Richtung (`↓`/`↑`) sitzen als kleine gerahmte Buttons in der
+Rahmenlinie.
+
+### Trackliste
+Spalten: Nummer, Titel/Interpret, Album, hinzugefügt, Herz (`30px`), Zeit. Das Herz ist ein
+Icon-Button: `♡` in `text-4`, Hover `text-1`, geliked `♥` in Akzenttext; es wechselt sofort
+beim Klick. Beim Ziehen zeigt eine `2px`-Linie in `accent-2` (innerer Schatten, kein äußerer)
+über oder unter der Zielzeile, wo die Zeile landet; ein Panel, das einen Drop annimmt (Queue),
+bekommt einen Akzentrahmen. Die Sammlung, die gerade spielt, trägt drei kurze `2px`-Balken in
+`accent-2`. Die ersten zehn Zeilen und die Karten einer Seite blenden nacheinander ein
+(120 ms, `translateY(6px)`→0, je 20 ms versetzt); ohne Animationen keine Bewegung.
+
 ### Toast
 Schwarz, `1px`-Rahmen `accent-2`, `32px` hoch, Text `text-3`, über der Player-Leiste
 zentriert. Rein: 260 ms (Deckkraft 0→1, `translateY(14px)`→0, `scale(.96)`→1,

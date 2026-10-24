@@ -434,6 +434,17 @@ impl SpotifyClient {
         Ok(r.and_then(|v| v.first().copied()).unwrap_or(false))
     }
 
+    /// Whether each of `uris` is in the library, 40 per request, in the same order.
+    pub async fn saved_many(&self, uris: &[String]) -> Result<Vec<bool>, ApiError> {
+        let mut out = Vec::with_capacity(uris.len());
+        for chunk in uris.chunks(40) {
+            let r: Option<Vec<bool>> = self.get("/me/library/contains", &[("uris", chunk.join(","))]).await?;
+            let r = r.unwrap_or_default();
+            out.extend((0..chunk.len()).map(|i| r.get(i).copied().unwrap_or(false)));
+        }
+        Ok(out)
+    }
+
     pub async fn set_saved(&self, uri: &str, saved: bool) -> Result<(), ApiError> {
         self.set_saved_many(&[uri.to_owned()], saved).await
     }
