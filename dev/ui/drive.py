@@ -26,6 +26,8 @@ mock Spotify API (dev/demo-server.py). Checks, in this order:
                Settings → shortcuts takes over, Esc cancels a recording, and taking another
                action's key swaps the two
   restart      tab, sort, open playlist, column sort, panel, page and window size survive a restart
+  resume       after Spotify forgot the session, the last track shows paused where it was with the
+               songs still queued, nothing starts by itself, and play continues exactly there
   big-playlist a 10 000-song playlist loads completely, stays responsive, scrolls to its end
                and filters quickly, without eating memory
   soak         a few minutes of playback with track changes on the lyrics page: memory stays
@@ -1227,6 +1229,81 @@ class Run:
         settle(1)
         self.check("restart", problems)
 
+    def resume(self):
+        """Spotify forgot the session (no active device, no queue): rtify shows the last track
+        paused where it was, with the songs still queued, and play continues exactly there."""
+        problems = []
+
+        def label(text):
+            return first(self.frame, role="label", name=text)
+
+        def play_button():
+            return first(self.frame, role="push button", name=re.compile("^(play|pause)$", re.I))
+
+        self.api("PUT", "/me/player/pause")
+        self.api("PUT", "/me/player/seek?position_ms=91000")
+        if not poll(lambda: label("1:31"), 15):
+            problems.append("rtify does not show the paused position 1:31 before the restart")
+        before = self.api("GET", "/me/player")
+        track, context = before["item"], (before.get("context") or {}).get("uri")
+        # A song queued from rtify.
+        self.open_library_tab("playlists")
+        click_center(wait(lambda: first(self.frame, role="list item", name="Gym"), 5, "Gym"))
+        settle(1.5)
+        popover = self.open_row_menu(2)
+        entry = first(popover or self.app, role=re.compile("push button|menu item"), name="add to queue")
+        if entry is None:
+            key("Escape")
+            self.check("resume", problems + ["the row menu has no 'add to queue'"])
+            return
+        t0 = time.time()
+        do_click(entry)
+
+        def queue_requests():
+            return [r for r in self.requests_seen()
+                    if r["path"] == "/v1/me/player/queue" and r["method"] == "POST" and r["t"] > t0]
+        if not poll(queue_requests, 5):
+            self.check("resume", problems + ["'add to queue' did not reach the server"])
+            return
+        uri = urllib.parse.parse_qs(queue_requests()[-1]["query"])["uri"][0]
+        queued = next(q for q in self.api("GET", "/me/player/queue")["queue"] if q["uri"] == uri)
+        settle(3)
+
+        # Spotify ends the session; rtify starts again.
+        self.api("PUT", "/me/player", {"device_ids": []})
+        t = time.time()
+        self.relaunch(wait_for_library=False)
+        settle(6)
+        grab(os.path.join(self.out, "resume-before.png"))
+        if not label(track["name"]):
+            problems.append(f"the last track {track['name']!r} is not shown")
+        if not label("1:31"):
+            problems.append("the last track is not shown at 1:31")
+        b = play_button()
+        if b is None or b.get_name().lower() != "play":
+            problems.append(f"the play button reads {b.get_name() if b else None!r}, not 'play'")
+        if not label(queued["name"]):
+            problems.append(f"the queued song {queued['name']!r} is not in the queue panel")
+        if any(r["path"] == "/v1/me/player/play" and r["t"] > t for r in self.requests_seen()):
+            problems.append("rtify started playback by itself")
+
+        if b is not None:
+            do_click(b)
+
+            def resumed():
+                now = self.api("GET", "/me/player")
+                return (now.get("item") or {}).get("uri") == track["uri"] and now["is_playing"] \
+                    and (now.get("context") or {}).get("uri") == context and now["progress_ms"] >= 90000
+            if not poll(resumed, 8):
+                problems.append(f"play did not continue {track['name']!r} at 1:31 in its context: "
+                                f"{self.api('GET', '/me/player')}")
+            if not poll(lambda: [q["uri"] for q in self.api("GET", "/me/player/queue")["queue"][:1]]
+                        == [queued["uri"]], 5):
+                problems.append(f"{queued['name']!r} was not queued again")
+        self.api("PUT", "/me/player/pause")
+        settle(2)
+        self.check("resume", problems)
+
     def pick_sort(self, name):
         """Click the library's sort button in the frame line until it shows `name`."""
         for _ in range(6):
@@ -1871,7 +1948,7 @@ def wait(fn, timeout, what):
 
 
 CHECKS = ["geometry", "a11y-names", "screenshots", "scroll-jump", "mpris", "big-playlist", "history", "undo", "instant",
-          "library", "keyboard", "keys", "click-all", "soak", "failures", "restart"]
+          "library", "keyboard", "keys", "click-all", "soak", "failures", "restart", "resume"]
 
 
 def main():

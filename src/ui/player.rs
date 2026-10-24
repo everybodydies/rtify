@@ -406,15 +406,20 @@ impl PlayerBar {
             .volume_touched
             .get()
             .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(2));
-        if let Some(v) = pb.device.as_ref().and_then(|d| d.volume_percent)
+        if let Some(v) = pb.device.as_ref().map_or(pb.volume_hint, |d| d.volume_percent)
             && !recently_touched
         {
             self.volume.set_value(v as f64);
         }
         self.volume
             .set_sensitive(pb.device.as_ref().is_some_and(|d| d.supports_volume != Some(false)));
-        self.device_label
-            .set_text(pb.device.as_ref().map(|d| d.name.as_str()).unwrap_or("no device"));
+        self.device_label.set_text(
+            pb.device
+                .as_ref()
+                .map(|d| d.name.as_str())
+                .or(pb.device_hint.as_deref())
+                .unwrap_or("no device"),
+        );
         self.devices_button.set_tooltip_text(Some(&match &pb.device {
             Some(d) => format!("Playing on {} · Spotify Connect devices", d.name),
             None => "Spotify Connect devices".to_owned(),

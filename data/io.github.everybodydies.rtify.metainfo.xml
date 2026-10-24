@@ -55,6 +55,11 @@
   </supports>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.6.0" date="2026-10-24">
+      <description>
+        <p>Restores the last session: the last track paused where it was, with its queue and volume, ready to continue.</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-10-24">
       <description>
         <p>Library sorting with your own order, a heart column in track lists, a fuller song menu.</p>

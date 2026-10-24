@@ -52,8 +52,12 @@ pub struct Playback {
     pub shuffle: bool,
     pub repeat: Repeat,
     pub context_uri: Option<String>,
-    /// True until the first live state arrives; `track` then holds the remembered track.
+    /// True until the first live state arrives, and again while Spotify has nothing active:
+    /// `track` then holds the remembered track, paused where it was.
     pub stale: bool,
+    /// The remembered volume and device, shown while no device is active.
+    pub volume_hint: Option<u32>,
+    pub device_hint: Option<String>,
 }
 
 impl Playback {
@@ -74,41 +78,25 @@ impl Playback {
             repeat: Repeat::parse(&s.repeat_state),
             context_uri: s.context.map(|c| c.uri).filter(|u| !u.is_empty()),
             stale: false,
+            volume_hint: None,
+            device_hint: None,
         }
     }
 
-    /// What to show before Spotify answered: the last-known track, paused, never playing.
+    /// What to show before Spotify answered, or while it has nothing active: the last-known
+    /// track, paused where it was, never playing.
     pub fn from_session(s: &AccountSession) -> Playback {
-        let track = s.last_track.as_ref().map(|t| Track {
-            uri: t.uri.clone(),
-            name: t.name.clone(),
-            duration_ms: t.duration_ms,
-            artists: vec![crate::spotify::model::ArtistRef {
-                name: t.artists.clone(),
-                ..Default::default()
-            }],
-            album: Some(crate::spotify::model::AlbumRef {
-                name: t.album.clone(),
-                images: if t.image_url.is_empty() {
-                    vec![]
-                } else {
-                    vec![crate::spotify::model::Image {
-                        url: t.image_url.clone(),
-                        width: Some(300),
-                        height: Some(300),
-                    }]
-                },
-                ..Default::default()
-            }),
-            kind: "track".into(),
-            ..Default::default()
-        });
+        let track = s.last_track.as_ref().map(track_of);
         Playback {
+            progress_ms: s.last_track.as_ref().map_or(0, |t| t.position_ms.min(t.duration_ms)),
+            fetched_at: Some(Instant::now()),
             track,
             shuffle: s.shuffle.unwrap_or(false),
             repeat: s.repeat.as_deref().map(Repeat::parse).unwrap_or_default(),
             context_uri: s.last_context_uri.clone(),
             stale: true,
+            volume_hint: s.volume,
+            device_hint: s.device_name.clone(),
             ..Default::default()
         }
     }
@@ -145,14 +133,7 @@ impl Playback {
             return;
         }
         if let Some(t) = &self.track {
-            s.last_track = Some(LastTrack {
-                uri: t.uri.clone(),
-                name: t.name.clone(),
-                artists: t.artist_names(),
-                album: t.album_name().to_owned(),
-                image_url: pick_image(t.images(), 200).map(|i| i.url.clone()).unwrap_or_default(),
-                duration_ms: t.duration_ms,
-            });
+            s.last_track = Some(last_track(t, self.position_now()));
         }
         if self.context_uri.is_some() {
             s.last_context_uri = self.context_uri.clone();
@@ -164,9 +145,70 @@ impl Playback {
         if let Some(d) = &self.device {
             s.device_id = d.id.clone();
             s.device_name = Some(d.name.clone());
+            if d.volume_percent.is_some() {
+                s.volume = d.volume_percent;
+            }
         }
         s.updated_at = crate::spotify::auth::unix_now();
     }
+}
+
+/// What rtify remembers of a track: enough to show it and to start it again.
+pub fn last_track(t: &Track, position_ms: u64) -> LastTrack {
+    LastTrack {
+        uri: t.uri.clone(),
+        name: t.name.clone(),
+        artists: t.artist_names(),
+        album: t.album_name().to_owned(),
+        image_url: pick_image(t.images(), 200).map(|i| i.url.clone()).unwrap_or_default(),
+        duration_ms: t.duration_ms,
+        position_ms,
+    }
+}
+
+/// A remembered track as the UI shows tracks.
+pub fn track_of(t: &LastTrack) -> Track {
+    Track {
+        uri: t.uri.clone(),
+        name: t.name.clone(),
+        duration_ms: t.duration_ms,
+        artists: vec![crate::spotify::model::ArtistRef {
+            name: t.artists.clone(),
+            ..Default::default()
+        }],
+        album: Some(crate::spotify::model::AlbumRef {
+            name: t.album.clone(),
+            images: if t.image_url.is_empty() {
+                vec![]
+            } else {
+                vec![crate::spotify::model::Image {
+                    url: t.image_url.clone(),
+                    width: Some(300),
+                    height: Some(300),
+                }]
+            },
+            ..Default::default()
+        }),
+        kind: if t.uri.starts_with("spotify:episode:") {
+            "episode"
+        } else {
+            "track"
+        }
+        .into(),
+        ..Default::default()
+    }
+}
+
+/// The songs queued from rtify that are still ahead, given Spotify's queue. Spotify plays its
+/// user queue before the context, so they can only be among the first `queued.len()` entries;
+/// a song that left that window has played (or was skipped).
+pub fn still_queued(queued: &[LastTrack], upcoming: &[Track]) -> Vec<LastTrack> {
+    upcoming
+        .iter()
+        .take(queued.len())
+        .filter(|t| queued.iter().any(|q| q.uri == t.uri))
+        .map(|t| last_track(t, 0))
+        .collect()
 }
 
 /// One deliberate step taken after reconnecting. Applied in order, each awaited, because
@@ -175,12 +217,51 @@ impl Playback {
 pub enum ReconnectStep {
     SetShuffle(bool),
     SetRepeat(Repeat),
-    /// Start `context` (optionally at `track`) on `device`. Only with `resume_on_startup`.
+    /// Start `track` at `position_ms` on `device`, inside `context` when there was one.
     Resume {
-        context: String,
-        track: Option<String>,
-        device: Option<String>,
+        context: Option<String>,
+        track: String,
+        position_ms: u64,
+        device: String,
     },
+    SetVolume(u32),
+    /// Queue these songs again, in this order.
+    Queue(Vec<String>),
+}
+
+/// The device to wake for a restore: the one that played last if it is still there, else the
+/// first one that takes commands.
+pub fn pick_device(saved: &AccountSession, available_devices: &[Device]) -> Option<String> {
+    saved
+        .device_id
+        .clone()
+        .filter(|id| available_devices.iter().any(|d| d.id.as_deref() == Some(id.as_str())))
+        .or_else(|| available_devices.iter().find(|d| !d.is_restricted).and_then(|d| d.id.clone()))
+}
+
+/// Bring back the remembered session on `device`: the track at its position (inside its
+/// context), shuffle, repeat, volume and the songs that were still queued.
+pub fn restore_plan(saved: &AccountSession, device: &str) -> Vec<ReconnectStep> {
+    let Some(track) = &saved.last_track else { return vec![] };
+    let mut steps = vec![ReconnectStep::Resume {
+        context: saved.last_context_uri.clone(),
+        track: track.uri.clone(),
+        position_ms: track.position_ms.min(track.duration_ms),
+        device: device.to_owned(),
+    }];
+    if let Some(on) = saved.shuffle {
+        steps.push(ReconnectStep::SetShuffle(on));
+    }
+    if let Some(r) = saved.repeat.as_deref() {
+        steps.push(ReconnectStep::SetRepeat(Repeat::parse(r)));
+    }
+    if let Some(v) = saved.volume {
+        steps.push(ReconnectStep::SetVolume(v));
+    }
+    if !saved.queue.is_empty() {
+        steps.push(ReconnectStep::Queue(saved.queue.iter().map(|t| t.uri.clone()).collect()));
+    }
+    steps
 }
 
 pub fn reconnect_plan(
@@ -191,24 +272,23 @@ pub fn reconnect_plan(
     available_devices: &[Device],
 ) -> Vec<ReconnectStep> {
     let Some(saved) = saved else { return vec![] };
-    let mut steps = Vec::new();
-    let has_active = live.device.is_some();
-    if resume_on_startup && !live.playing && live.track.is_none() {
-        let device = saved
-            .device_id
-            .clone()
-            .filter(|id| available_devices.iter().any(|d| d.id.as_deref() == Some(id.as_str())))
-            .or_else(|| available_devices.iter().find(|d| !d.is_restricted).and_then(|d| d.id.clone()));
-        if let (Some(context), Some(device)) = (saved.last_context_uri.clone(), device) {
-            steps.push(ReconnectStep::Resume {
-                context,
-                track: saved.last_track.as_ref().map(|t| t.uri.clone()),
-                device: Some(device),
-            });
+    // A stale state is the remembered one: Spotify has nothing active.
+    let idle = !live.playing && (live.track.is_none() || live.stale);
+    if resume_on_startup
+        && idle
+        && let Some(device) = pick_device(saved, available_devices)
+    {
+        let mut steps = restore_plan(saved, &device);
+        if !restore_shuffle_repeat {
+            steps.retain(|s| !matches!(s, ReconnectStep::SetShuffle(_) | ReconnectStep::SetRepeat(_)));
+        }
+        if !steps.is_empty() {
+            return steps;
         }
     }
-    // Shuffle/repeat need a device that is (or is about to be) active.
-    if restore_shuffle_repeat && (has_active || !steps.is_empty()) {
+    let mut steps = Vec::new();
+    // Shuffle/repeat need a device that is active.
+    if restore_shuffle_repeat && live.device.is_some() && !live.stale {
         if let Some(sh) = saved.shuffle.filter(|s| *s != live.shuffle) {
             steps.push(ReconnectStep::SetShuffle(sh));
         }
@@ -279,12 +359,19 @@ mod tests {
         assert_eq!(
             plan[0],
             ReconnectStep::Resume {
-                context: "spotify:playlist:p".into(),
-                track: Some("spotify:track:1".into()),
-                device: Some("d1".into())
+                context: Some("spotify:playlist:p".into()),
+                track: "spotify:track:1".into(),
+                position_ms: 0,
+                device: "d1".into()
             }
         );
         assert_eq!(plan.len(), 3);
+        // The remembered state shown while Spotify has nothing active counts as idle.
+        let restored = Playback::from_session(&saved());
+        assert!(matches!(
+            reconnect_plan(false, true, Some(&saved()), &restored, &[device("d1")])[..],
+            [ReconnectStep::Resume { .. }]
+        ));
         let busy = Playback {
             playing: true,
             track: Some(Track::default()),
@@ -296,6 +383,59 @@ mod tests {
                 .iter()
                 .any(|s| matches!(s, ReconnectStep::Resume { .. }))
         );
+    }
+
+    #[test]
+    fn restore_brings_back_position_queue_and_volume() {
+        let mut s = saved();
+        s.last_track.as_mut().unwrap().duration_ms = 200_000;
+        s.last_track.as_mut().unwrap().position_ms = 91_000;
+        s.volume = Some(40);
+        s.queue = vec![LastTrack {
+            uri: "spotify:track:q".into(),
+            ..Default::default()
+        }];
+        let restored = Playback::from_session(&s);
+        assert!(restored.stale && !restored.playing);
+        assert_eq!(restored.position_now(), 91_000);
+        assert_eq!(restored.volume_hint, Some(40));
+        assert_eq!(
+            restore_plan(&s, "d1"),
+            vec![
+                ReconnectStep::Resume {
+                    context: Some("spotify:playlist:p".into()),
+                    track: "spotify:track:1".into(),
+                    position_ms: 91_000,
+                    device: "d1".into()
+                },
+                ReconnectStep::SetShuffle(true),
+                ReconnectStep::SetRepeat(Repeat::Track),
+                ReconnectStep::SetVolume(40),
+                ReconnectStep::Queue(vec!["spotify:track:q".into()]),
+            ]
+        );
+        assert!(restore_plan(&AccountSession::default(), "d1").is_empty());
+    }
+
+    #[test]
+    fn queued_songs_leave_once_played() {
+        let t = |u: &str| Track {
+            uri: u.into(),
+            name: u.to_uppercase(),
+            ..Default::default()
+        };
+        let lt = |u: &str| LastTrack {
+            uri: u.into(),
+            ..Default::default()
+        };
+        let queued = [lt("a"), lt("b")];
+        let kept = still_queued(&queued, &[t("a"), t("b"), t("c")]);
+        assert_eq!(kept.iter().map(|k| k.uri.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(kept[0].name, "A", "takes Spotify's details");
+        // "a" played; "a" again later in the context does not keep it.
+        let kept = still_queued(&queued, &[t("b"), t("c"), t("a")]);
+        assert_eq!(kept.iter().map(|k| k.uri.as_str()).collect::<Vec<_>>(), ["b"]);
+        assert!(still_queued(&[], &[t("a")]).is_empty());
     }
 
     #[test]

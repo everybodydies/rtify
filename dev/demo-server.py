@@ -369,6 +369,10 @@ class Handler(BaseHTTPRequestHandler):
                 pl["images"] = [dict(url=f"{BASE}/upload/{pid}.jpg?{len(jpg)}", width=640, height=640)]
                 return self.send(202)
             if p == "/me/player/play":
+                if "device_id" in q:
+                    # wie Spotify: ?device_id= weckt dieses Gerät und spielt dort
+                    for d in DEVICES:
+                        d["is_active"] = d["id"] == q["device_id"][0]
                 if data.get("context_uri"):
                     ctx = data["context_uri"]
                     pid = ctx.split(":")[-1]
@@ -417,6 +421,11 @@ class Handler(BaseHTTPRequestHandler):
             elif p == "/me/player":
                 for d in DEVICES:
                     d["is_active"] = d["id"] in data.get("device_ids", [])
+                if not data.get("device_ids"):
+                    # Testhilfe: ohne Gerät endet die Sitzung wie bei Spotify nach langer Pause,
+                    # samt Warteschlange
+                    set_progress(progress(), False)
+                    state["queue"].clear()
             elif p == "/me/library":
                 for uri in q["uris"][0].split(","):
                     (saved.add if m == "PUT" else saved.discard)(uri)
