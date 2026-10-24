@@ -58,6 +58,8 @@ struct Toast {
     line: gtk::DrawingArea,
     started: Rc<Cell<Option<(std::time::Instant, std::time::Duration)>>>,
     timer: Rc<Cell<Option<glib::SourceId>>>,
+    /// Whether the line's redraw timer runs.
+    line_timer: Rc<Cell<bool>>,
 }
 
 impl Toast {
@@ -95,13 +97,6 @@ impl Toast {
             cr.rectangle(0.0, 0.0, w as f64 * left, h as f64);
             let _ = cr.fill();
         });
-        let st = started.clone();
-        line.add_tick_callback(move |area, _| {
-            if st.get().is_some() {
-                area.queue_draw();
-            }
-            glib::ControlFlow::Continue
-        });
         Self {
             root,
             frame,
@@ -110,6 +105,7 @@ impl Toast {
             line,
             started,
             timer: Rc::default(),
+            line_timer: Rc::default(),
         }
     }
 }
@@ -513,6 +509,7 @@ impl MainWindow {
         keys.set_propagation_phase(gtk::PropagationPhase::Capture);
         let a = app.clone();
         keys.connect_key_pressed(move |ctl, key, _, mods| {
+            log::warn!("key {:?} {:?} -> {:?}", key.name(), mods, crate::keymap::combo(key, mods));
             let Some(combo) = crate::keymap::combo(key, mods) else {
                 return glib::Propagation::Proceed;
             };
@@ -722,6 +719,20 @@ impl MainWindow {
         t.line.set_visible(motion);
         t.started.set(Some((std::time::Instant::now(), shown)));
         t.line.queue_draw();
+        // Ten steps a second, not every frame: redrawing the overlay at the frame rate kept a
+        // software-rendered window busy enough to stall everything else while a toast showed.
+        if !t.line_timer.get() && motion {
+            t.line_timer.set(true);
+            let t2 = t.clone();
+            glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+                if t2.started.get().is_none() {
+                    t2.line_timer.set(false);
+                    return glib::ControlFlow::Break;
+                }
+                t2.line.queue_draw();
+                glib::ControlFlow::Continue
+            });
+        }
         let t2 = t.clone();
         let id = glib::timeout_add_local_once(shown, move || {
             let t = &t2;
