@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-24
+
 New look and layout from the Sys24 design.
 
 - Prototype look: pastel mint accent (`#9bd4c9`), 1px panel frames with the label in the accent

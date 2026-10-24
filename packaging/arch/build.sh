@@ -35,6 +35,6 @@ Xvfb :99 >/dev/null 2>&1 &
 export DISPLAY=:99 GDK_BACKEND=x11 GSK_RENDERER=cairo GTK_A11Y=none
 sleep 2
 dbus-run-session -- bash -c 'rtify --show & pid=$!; sleep 5; rtify --quit; wait $pid' 2>/dev/null
-grep -q 'version = 1' "$work/cfg/config.toml"
+grep -q '^version = [0-9]' "$work/cfg/config.toml"
 echo "built and smoke-tested: $pkg"
 (cd "$out" && sha256sum rtify-*.pkg.tar.zst > SHA256SUMS)

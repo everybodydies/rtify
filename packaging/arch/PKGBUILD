@@ -1,6 +1,6 @@
 # Maintainer: everybodydies
 pkgname=rtify
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc="Spotify client with a built-in Connect player: System24/OLED look, tray, global shortcuts, animated lyrics"
 arch=('x86_64')
