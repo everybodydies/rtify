@@ -428,7 +428,13 @@ impl SettingsView {
             name.update_property(&[gtk::accessible::Property::Label("device name")]);
             let a = app.clone();
             name.connect_changed(move |_| a.builtin_settings_changed());
-            b.row("device name", "how this computer shows up in Spotify's device lists", &name, true, builtin);
+            b.row(
+                "device name",
+                "how this computer shows up in Spotify's device lists",
+                &name,
+                true,
+                builtin,
+            );
             let bitrate = crate::config::Player::BITRATES
                 .iter()
                 .position(|r| *r == c.player.bitrate)
@@ -830,7 +836,10 @@ impl Builder {
         root.append(&head);
         let v = self.view.clone();
         reset_btn.connect_clicked(move |_| {
-            let followed = v.app.config.borrow().config.lyrics.follow_playback;
+            let (followed, player) = {
+                let c = &v.app.config.borrow().config;
+                (c.lyrics.follow_playback, c.player.clone())
+            };
             v.app.update_config(reset);
             let a = v.app.clone();
             // Live consumers first, then rebuild the rows with the restored values.
@@ -839,6 +848,12 @@ impl Builder {
             a.apply_lyrics_options();
             if a.config.borrow().config.lyrics.follow_playback != followed {
                 a.lyrics_follow_changed();
+            }
+            let now = a.config.borrow().config.player.clone();
+            if now.enabled != player.enabled {
+                a.set_builtin_enabled(now.enabled);
+            } else if now != player {
+                a.builtin_settings_changed();
             }
             a.apply_layout();
             let v = v.clone();
